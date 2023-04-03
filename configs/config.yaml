@@ -1,0 +1,4 @@
+#dataset
+ros_bag_path: '../../data/hilti/rosbag/exp01_construction_ground_level.bag'
+data_dir: 'dataset/data_old'
+field_name: 'x, y, intensity'
