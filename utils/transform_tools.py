@@ -58,6 +58,23 @@ def grab_img(img_and_label):
         return img_and_label
 
 
+def grab_mask(img_and_label):
+    """ Called to extract the image from an img_and_label input
+    (a dictionary). Also compatible with old-style PIL images.
+    """
+    if isinstance(img_and_label, dict):
+        # if input is a dictionary, then
+        # it must contains the img or its size.
+        try:
+            return img_and_label['mask']
+        except KeyError:
+            return DummyImg(img_and_label['imsize'])
+
+    else:
+        # or it must be the img directly
+        return img_and_label
+
+
 def update_img_and_labels(img_and_label, img, persp=None):
     """ Called to update the img_and_label
     """

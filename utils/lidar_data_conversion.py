@@ -9,7 +9,6 @@ import random
 H_RES = 0.18  # horizontal resolution (10Hz setting)
 V_RES = 1  # vertical res
 V_FOV = (-16, 15)  # Field of view (-ve, +ve) along vertical axis
-k
 
 class LidarData:
     """
