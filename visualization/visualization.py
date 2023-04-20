@@ -165,10 +165,16 @@ def show_flow(img0, img1, flow, mask=None):
     pl.subplots_adjust(0.01, 0.01, 0.99, 0.99, wspace=0.02, hspace=0.02)
 
     def motion_notify_callback(event):
-        if event.inaxes is None: return
+        if event.inaxes is None:
+            return
         x, y = event.xdata, event.ydata
-        ax1.lines = []
-        ax2.lines = []
+        # remove all lines
+        while ax1.lines:
+            ax1.lines[0].remove()
+        while ax2.lines:
+            ax2.lines[0].remove()
+        # ax1.lines = []
+        # ax2.lines = []
         try:
             x, y = int(x + 0.5), int(y + 0.5)
             ax1.plot(x, y, '+', ms=10, mew=2, color='blue', scalex=False, scaley=False)
@@ -185,6 +191,4 @@ def show_flow(img0, img1, flow, mask=None):
 
     cid_move = fig.canvas.mpl_connect('motion_notify_event', motion_notify_callback)
     print("Move your mouse over the images to show matches (ctrl-C to quit)")
-    pl.show()
-
-
+    pl.show(block=True)

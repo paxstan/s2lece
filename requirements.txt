@@ -3,3 +3,5 @@ Pillow~=9.4.0
 torchvision~=0.15.1
 PyYAML~=6.0
 rosbag~=1.15.11
+matplotlib~=3.7.1
+open3d~=0.17.0

@@ -97,6 +97,7 @@ class PairLoader:
         # Find suitable left and right windows
         trials = 0  # take the best out of few trials
         best = -np.inf, None
+        best_windows = []
 
         def sample_valid_pixel():
             n = np.random.choice(sample_w.size, p=sample_w.ravel())
@@ -162,6 +163,7 @@ class PairLoader:
             trials += 1
             if score > best[0]:
                 best = score, win1, win2
+                best_windows.append(best)
 
             print(best)
 
