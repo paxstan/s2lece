@@ -1,10 +1,9 @@
 import numpy as np
 from absl import app, flags
 from input_pipeline.dataset import random_image_loader, DatasetCreator
-from input_pipeline.dataset_classes import SyntheticPair
+from input_pipeline.dataset_classes import SyntheticPair, LidarPairDataset
 from input_pipeline.dataloader import PairLoader
-from input_pipeline.preprocessing import RandomScale, RandomTilting, PixelNoise, RandomTranslation, ColorJitter, \
-    RandomCrop
+from input_pipeline.preprocessing import RandomScale, RandomTilting, PixelNoise, RandomTranslation, RandomCrop
 import yaml
 from visualization.visualization import show_flow
 from utils import utils_params
@@ -14,7 +13,6 @@ RANDOM_TILT = RandomTilting(magnitude=0.025, directions="left")
 RANDOM_NOISE = PixelNoise(ampl=50)
 RANDOM_TRANS = RandomTranslation(roll=100)
 RANDOM_RESCALE = RandomScale(64, 64, can_upscale=True)
-RANDOM_JITTER = ColorJitter(0.1, 0.1, 0.2, 0.1)
 RANDOM_CROP = RandomCrop((64, 180))
 
 FLAGS = flags.FLAGS
@@ -31,8 +29,11 @@ def main(argv):
         # utils_misc.set_loggers(run_paths['path_logs_train'], logging.INFO)
 
         # utils_params.save_config(run_paths['path_gin'], gin.config_str())
-        dataset = DatasetCreator(config)
-        dataset()
+        create_dataset = DatasetCreator(config)
+        create_dataset()
+        lidar_pair_dt = LidarPairDataset(root=config["data_dir"])
+        for i in range(len(lidar_pair_dt)):
+            lidar_pair_dt.get_pair(idx=i)
     else:
         img, mask_array = random_image_loader(config["data_dir"])
         img_dict = dict(img=img, persp=(1, 0, 0, 0, 1, 0, 0, 0), mask=mask_array)

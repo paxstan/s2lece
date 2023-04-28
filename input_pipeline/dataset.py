@@ -5,101 +5,109 @@ import rosbag
 import numpy as np
 import sensor_msgs.point_cloud2 as pc2
 from PIL import Image
-from utils.data_conversion import pcd_transformation, LidarDataConverter, interpolated_data, perform_icp
+from utils.data_conversion import pcd_transformation, LidarDataConverter, Imu2World, perform_kdtree
 from input_pipeline.dataset_classes import LidarData
 
 TRANSLATION_LIDAR_IMU = np.array([-0.001, -0.00855, 0.055])
 ROTATION_LIDAR_IMU = np.array([0.7071068, -0.7071068, 0, 0])
-TRANSLATION_IMU_WORLD = np.array([-3.45, 6.27, 1.79])
-ROTATION_IMU_WORLD = np.array([0.6602272584, 0.7510275859, 0.003393373643, -0.006783616141])
 
 
 class DatasetCreator:
     def __init__(self, config):
         self.config = config
         with open(config['ground_truth_path']) as file:
-            self.ground_truth_imu = [line.rstrip().split(" ") for line in file]
+            self.ground_truth_imu = np.array([tuple(map(float, line.rstrip().split(" "))) for line in file])
+        self.ground_truth_imu = self.ground_truth_imu[self.ground_truth_imu[:, 0].argsort()]
+        self.new_gt = np.copy(self.ground_truth_imu)
         self.lidar_data_converter = LidarDataConverter(save_dir=self.config['data_dir'])
-        self.list_of_pcd = []
-        self.lidar_data_list = []
+        # self.list_pair_dict = []
 
     def __call__(self):
         if not os.path.exists(self.config['data_dir']):
             print("extracting raw dataset from ros bag.....")
             os.makedirs(self.config['data_dir'])
             self.point_cloud_extractor()
+            self.generate_pairs(threshold=0.2)
             print("Finished extraction of raw dataset !")
         else:
             print("raw dataset already extracted !")
-
-        self.process_data()
-        self.generate_correspondence()
+        return self.load_data()
 
     def point_cloud_extractor(self):
         i = 0
+        list_gt = []
         bag = rosbag.Bag(self.config['ros_bag_path'])
-        for topic, msg, time in bag.read_messages(topics=['/hesai/pandar']):
-            if float(self.ground_truth_imu[i][0]) == time.to_time():
-                data = list(pc2.read_points(msg, skip_nans=True,
-                                            field_names=['x', 'y', 'z', 'intensity', 'timestamp']))
+        try:
+            for topic, msg, time in bag.read_messages(topics=['/hesai/pandar']):
+                assert i < len(self.ground_truth_imu)-1, "i should be less than length of gt file"
+                if self.ground_truth_imu[i][0] == time.to_time():
+                    data = list(pc2.read_points(msg, skip_nans=True,
+                                                field_names=['x', 'y', 'z', 'intensity', 'timestamp']))
 
-                # process and save point cloud in the form of npy file
-                self.lidar_data_converter(data, i)
+                    # process and save point cloud in the form of npy file
+                    self.lidar_data_converter(data, i, [self.ground_truth_imu[i], self.ground_truth_imu[i + 1]])
+                    list_gt.append(self.ground_truth_imu[i])
 
-                i = i + 1
+                    print(f"processed... {i}")
+                    i = i + 1
+        except AssertionError as error:
+            print(error)
+
+        np.save(f"{self.config['data_dir']}/ground_truth_pose.npy", np.array(list_gt))
         bag.close()
 
-    def process_data(self):
+    def generate_pairs(self, threshold):
+        list_of_pairs = []
+        dt = np.dtype([('source', np.int32), ('target', np.int32), ('corres', 'object')])
+        poses = self.ground_truth_imu[:, 1:4]
+        for i, pose in enumerate(poses):
+            try:
+                pair_dict = dict()
+                pair_dict["source"] = i
+                source_scan_path = os.path.join(self.config['data_dir'], str(i))
+                source_scan_world_frame = np.load(f'{source_scan_path}/world_frame.npy')
+                distances = np.linalg.norm((pose - poses), axis=1)
+                index = np.where((distances > 0) & (distances <= 0.5))
+                for ix in index[0]:
+                    try:
+                        target_scan_path = os.path.join(self.config['data_dir'], str(ix))
+                        target_scan_world_frame = np.load(f'{target_scan_path}/world_frame.npy')
+                        distances, indices = perform_kdtree(
+                            source_scan_world_frame, target_scan_world_frame, threshold=threshold)
+                        indices[distances == np.inf] = -1
+                        if len(indices[distances != np.inf]) >= len(source_scan_world_frame) * 0.5:
+                            pair = dict()
+                            pair["source"] = i
+                            pair["target"] = ix
+                            pair["corres"] = indices
+                            list_of_pairs.append(pair)
+                    except FileNotFoundError as e:
+                        print(e)
+                print(f"corres count at {i}: {len(list_of_pairs)}")
+            except FileNotFoundError as e:
+                print(e)
+        arr = np.empty(len(list_of_pairs), dtype=dt)
+        for idx, val in enumerate(list_of_pairs):
+            arr[idx] = (val['source'], val['target'], val['corres'])
+        np.save(os.path.join(self.config['data_dir'], "corres.npy"), arr)
+
+    def load_data(self):
         i = 0
-        dir_list = os.walk(self.config['data_dir'])
-        for sub_dir in os.listdir(self.config['data_dir']):
-            sub_dir_path = os.path.join(self.config['data_dir'], sub_dir)
-            lidar_data = LidarData(sub_dir_path)
-            # org_data = np.load(f'{sub_dir_path}/org_data.npy')
-            # range_data = np.load(f'{sub_dir_path}/range.npy')
-            # xyz_data = np.load(f'{sub_dir_path}/xyz.npy')
+        list_data = []
+        folder_count = len(os.listdir(self.config['data_dir']))
+        while i < folder_count:
+            path = os.path.join(self.config['data_dir'], str(i))
+            list_data.append(LidarData(path))
+            i = i + 1
+        return list_data
 
-            # extract point cloud
-            cloud_data = np.asarray([data[:3] for data in lidar_data.org_data])
-            l_pcd = o3d.geometry.PointCloud()
-            l_pcd.points = o3d.utility.Vector3dVector(cloud_data)
-            # transform from lidar frame to imu frame
-            i_pcd = pcd_transformation(copy.deepcopy(l_pcd), ROTATION_LIDAR_IMU, TRANSLATION_LIDAR_IMU)
-
-            # transform from imu frame to world frame
-            translation_imu_world = [float(axis) for axis in self.ground_truth_imu[i][1:4]]
-            rotation_imu_world = [float(quat) for quat in self.ground_truth_imu[i][4:]]
-            world_pcd = pcd_transformation(copy.deepcopy(i_pcd), rotation_imu_world, translation_imu_world)
-
-            self.list_of_pcd.append(i_pcd)
-            self.lidar_data_list.append(lidar_data)
-
-            # extract timedata
-            # timestamp_data = [data[4] for data in msg_data]
-            # list_points = [i for i, p_time in enumerate(timestamp_data) if p_time < float(ground_truth[i][0])]
-            #
-            # print("ground truth time- ", float(ground_truth[i][0]))
-            # if float(ground_truth[i][0]) >= time.to_time():
-            #     print("msg time- ", time.to_time())
-            #     list_of_pcd.append(l_pcd)
-            # else:
-            #     print("outbound msg time- ", time.to_time())
-            #     interp_rotation, interp_translation = interpolated_data(list_of_pcd)
-            #     interp_pcd = pcd_transformation(list_of_pcd[0], interp_rotation, interp_translation)
-            #     list_interp_pcd.append(interp_pcd)
-            #     points = np.array(cloud_data)
-            #     list_of_pcd = [l_pcd]
-    def generate_correspondence(self):
+    def join_corres(self):
         i = 0
-        while i < len(self.list_of_pcd)-1:
-            icp_result_list = perform_icp([self.list_of_pcd[i], self.list_of_pcd[i+1]])
-            print(icp_result_list[0].fitness)
-            for corres in np.asarray(icp_result_list[0].correspondence_set):
-                pcd_a_index = np.where(self.lidar_data_list[i].xyz_data == corres[0])
-                pcd_b_index = np.where(self.lidar_data_list[i+1].xyz_data == corres[1])
-                print("correspondence pixel, a: ", pcd_a_index, " b: ", pcd_b_index)
-
-
+        folder_count = len(os.listdir(self.config['data_dir']))
+        dt = np.dtype([('source', np.int32), ('target', np.int32), ('corres', 'object')])
+        while i < folder_count:
+            path = os.path.join(self.config['data_dir'], str(i))
+            corres = np.load(f'{path}/corres.npy')
 
 
 def random_image_loader(data_dir):
