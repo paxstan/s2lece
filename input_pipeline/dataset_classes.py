@@ -10,10 +10,6 @@ import torchvision.transforms as tvf
 from scipy.signal import convolve2d
 from scipy.spatial import KDTree
 
-RGB_mean = [0.5]
-RGB_std = [0.125]
-norm_RGB = tvf.Compose([tvf.ToTensor(), tvf.Normalize(mean=RGB_mean, std=RGB_std)])
-
 
 class Dataset(object):
     """ Base class for a dataset. To be overloaded.
@@ -35,7 +31,7 @@ class Dataset(object):
         from PIL import Image
         fname = self.get_filename(img_idx)
         try:
-            return Image.open(fname).convert('RGB')
+            return Image.open(fname)
         except Exception as e:
             raise IOError("Could not load image %s (reason: %s)" % (fname, str(e)))
 
@@ -44,54 +40,6 @@ class Dataset(object):
         res += '  %d images' % self.nimg
         res += '\n  root: %s...\n' % self.root
         return res
-
-
-class SyntheticPair:
-    """ A synthetic generator of image pairs.
-            Given a normal image dataset, it constructs pairs using random homographies & noise.
-        """
-
-    def __init__(self, scale, distort):
-        self.distort = distort
-        self.scale = scale
-
-    @staticmethod
-    def make_pair(img):
-        return img, img
-
-    def get_pair(self, org_img, output=('aflow')):
-        """ Procedure:
-        This function applies a series of random transformations to one original image
-        to form a synthetic image pairs with perfect ground-truth.
-        """
-        if isinstance(output, str):
-            output = output.split()
-
-        original_img = org_img
-        scaled_image = self.scale(original_img)
-        scaled_image, scaled_image2 = self.make_pair(scaled_image['img'])
-        # scaled_image = original_img
-        rand_tilt = self.distort[0](inp=dict(img=scaled_image2, persp=(1, 0, 0, 0, 1, 0, 0, 0)))
-        rand_noise = self.distort[1](inp=rand_tilt)
-        scaled_and_distorted_image = self.distort[2](inp=rand_noise)
-        # scaled_and_distorted_image = self.distort(
-        #     dict(img=scaled_image2, persp=(1, 0, 0, 0, 1, 0, 0, 0)))
-        W, H = scaled_image.size
-        trf = scaled_and_distorted_image['persp']
-
-        meta = dict()
-        meta['mask'] = org_img['mask']
-        if 'aflow' in output or 'flow' in output:
-            # compute optical flow
-            xy = np.mgrid[0:H, 0:W][::-1].reshape(2, H * W).T
-            aflow = np.float32(persp_apply(trf, xy).reshape(H, W, 2))
-            meta['flow'] = aflow - xy.reshape(H, W, 2)
-            meta['aflow'] = aflow
-
-        if 'homography' in output:
-            meta['homography'] = np.float32(trf + (1,)).reshape(3, 3)
-
-        return scaled_image, scaled_and_distorted_image['img'], meta
 
 
 class LidarBase(Dataset):
@@ -182,7 +130,7 @@ class LidarPairDataset(LidarBase):
         img2 = Image.fromarray(img2.reshape(h1, w1))
         img1 = Image.fromarray(img1.reshape(h1, w1))
 
-        meta = {'aflow': flow, 'mask': mask}
+        meta = {'aflow': flow.transpose((2, 0, 1)), 'mask': mask}
         return img1, img2, meta
 
     def get_pixel_match(self, mask2, source, target):
@@ -202,7 +150,7 @@ class LidarPairDataset(LidarBase):
         h2, w2 = mask2.shape
         # transform all position vectors from img1 to frame2
         pos1 = pos1.reshape((h1 * w1, 4)).transpose((1, 0))
-        xyz_t = np.dot(tf, pos1).transpose((1, 0))[:, :3] # ones added in 201 will be removed here
+        xyz_t = np.dot(tf, pos1).transpose((1, 0))[:, :3]  # ones added in 201 will be removed here
 
         # get indices of pixel correspondences
         proj_idx_1 = project_point_cloud(xyz_t, height=h2, width=w2)
@@ -243,6 +191,71 @@ class LidarPairDataset(LidarBase):
         flow[:, :, 1][np.invert(mask_valid_in_2)] = np.nan
 
         return flow, mask_valid_in_2
+
+
+class SyntheticPair(LidarBase):
+    """ A synthetic generator of image pairs.
+            Given a normal image dataset, it constructs pairs using random homographies & noise.
+        """
+
+    def __init__(self, root, scale=None, distort=None, crop=False):
+        LidarBase.__init__(self, crop)
+        self.root = root
+        self.distort = distort
+        self.scale = scale
+
+    def get_image(self, img_idx):
+        folder_path = os.path.join(self.root, img_idx)
+        img = self.open_lidar_image(folder_path)
+        return img
+
+    def get_valid_range_mask(self, idx):
+        folder_path = os.path.join(self.root, idx)
+        mask = np.load(folder_path + '/valid_mask.npy')
+        return mask
+
+    def get_xyz(self, idx):
+        folder_path = os.path.join(self.root, idx)
+        xyz = np.load(folder_path + '/xyz.npy')
+        return xyz
+
+    @staticmethod
+    def make_pair(img):
+        return img, img
+
+    def get_pair(self, org_img, output=('aflow')):
+        """ Procedure:
+        This function applies a series of random transformations to one original image
+        to form a synthetic image pairs with perfect ground-truth.
+        """
+        if isinstance(output, str):
+            output = output.split()
+
+        original_img = org_img
+        scaled_image = self.scale(original_img)
+        scaled_image, scaled_image2 = self.make_pair(scaled_image['img'])
+        # scaled_image = original_img
+        rand_tilt = self.distort[0](inp=dict(img=scaled_image2, persp=(1, 0, 0, 0, 1, 0, 0, 0)))
+        rand_noise = self.distort[1](inp=rand_tilt)
+        scaled_and_distorted_image = self.distort[2](inp=rand_noise)
+        # scaled_and_distorted_image = self.distort(
+        #     dict(img=scaled_image2, persp=(1, 0, 0, 0, 1, 0, 0, 0)))
+        W, H = scaled_image.size
+        trf = scaled_and_distorted_image['persp']
+
+        meta = dict()
+        meta['mask'] = org_img['mask']
+        if 'aflow' in output or 'flow' in output:
+            # compute optical flow
+            xy = np.mgrid[0:H, 0:W][::-1].reshape(2, H * W).T
+            aflow = np.float32(persp_apply(trf, xy).reshape(H, W, 2))
+            meta['flow'] = aflow - xy.reshape(H, W, 2)
+            meta['aflow'] = aflow
+
+        if 'homography' in output:
+            meta['homography'] = np.float32(trf + (1,)).reshape(3, 3)
+
+        return scaled_image, scaled_and_distorted_image['img'], meta
 
 
 class LidarData:

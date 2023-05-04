@@ -206,6 +206,8 @@ class LidarDataConverter:
         imu2world = Imu2World(copy.deepcopy(i_pcd.points), gt1, gt2, timestamp_data)
         world_points = imu2world.transform_pcd()
 
+        # self.points = np.array(world_points)
+
         # Create an Open3D point cloud object
         # w_pcd = o3d.geometry.PointCloud()
         # w_pcd.points = o3d.utility.Vector3dVector(world_points)
@@ -245,25 +247,6 @@ def project_point_cloud(points, height=64., width=1024.):
         idx:
             2D image indices of the projected 3D points
     """
-    # Projecting to 2D
-    # x_points = points[:, 0]
-    # y_points = points[:, 1]
-    # z_points = points[:, 2]
-    # r = np.sqrt(x_points ** 2 + y_points ** 2, z_points ** 2) + 1e-6 # distance to origin
-    #
-    # fov_up = 15 / 180.0 * np.pi  # field of view up in rad
-    # fov_down = -16 / 180.0 * np.pi  # field of view down in rad
-    # fov = abs(fov_down) + abs(fov_up)  # get field of view total in ra
-    #
-    # pitch = np.arcsin(np.clip(z_points/r, -1, 1))
-    # yaw = np.arctan2(y_points, -x_points)
-    # u = 1.0 - (pitch + fov_down)/fov
-    # v = 0.5 * (yaw/np.pi + 1.0)
-    #
-    # x_img = (v * width).squeeze()
-    # x_img[x_img < 0] = x_img[x_img < 0] + width
-    # x_img[x_img >= width] = x_img[x_img >= width] - width
-    # y_img = (u * height).squeeze()
 
     fov_up = 15
     fov_down = -16

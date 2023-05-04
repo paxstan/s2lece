@@ -1,3 +1,7 @@
+#general
+save_path: 'runs/run.pt'
+gpu: [0]
+
 #dataset
 ros_bag_path: '../../data/hilti/rosbag/exp04_imu/exp04_construction_upper_level.bag'
 ground_truth_path : '../../data/hilti/rosbag/exp04_imu/exp_04_construction_upper_level_imu.txt'
@@ -7,3 +11,10 @@ field_name: 'x, y, intensity'
 #imu_data
 translation_lidar_imu : np.array([-0.001, -0.00855, 0.055])
 rotation_lidar_imu : np.array([0.7071068, -0.7071068, 0, 0])
+
+#hyperparameter
+learning_rate: 1e-4
+weight_decay: 5e-4
+epoch: 5
+reliability_thr: 0.9
+repeatability_thr: 0.9

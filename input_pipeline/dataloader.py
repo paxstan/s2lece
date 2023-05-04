@@ -3,14 +3,125 @@ import pdb
 from PIL import Image
 from utils.transform_tools import persp_apply
 import torchvision.transforms as tvf
+import torch
+from torch.utils.data import DataLoader
 
-RGB_mean = [0.5]
-RGB_std = [0.125]
-
-norm_RGB = tvf.Compose([tvf.ToTensor(), tvf.Normalize(mean=RGB_mean, std=RGB_std)])
+img_mean = [0.5]
+img_std = [0.125]
+normalize_img = tvf.Compose([tvf.ToTensor(), tvf.Normalize(mean=img_mean, std=img_std)])
 
 
 class PairLoader:
+    def __init__(self, dataset, crop, scale, distort):
+        assert hasattr(dataset, 'npairs')
+        assert hasattr(dataset, 'get_pair')
+        self.dataset = dataset
+        self.crop = crop
+        self.scale = scale
+        self.distort = distort
+        self.n_samples = 5  # number of random trials per image
+        self.norm = normalize_img
+
+    def __len__(self):
+        assert len(self.dataset) == self.dataset.npairs, "not same length"  # and not nimg
+        return len(self.dataset)
+
+    def __getitem__(self, i):
+        # Retrieve an image pair and their absolute flow
+        img_a, img_b, metadata = self.dataset.get_pair(i)
+
+        # aflow contains pixel coordinates indicating where each
+        # pixel from the left image ended up in the right image
+        # as (x,y) pairs, but its shape is (H,W,2)
+        img_a = np.array(img_a)
+        img_b = np.array(img_b)
+        aflow = np.float32(metadata['aflow'])
+        mask = metadata.get('mask', np.ones(aflow.shape[:2], np.uint8))
+
+        result = dict(
+            img1=self.norm(img_a)[:2, :, :],
+            img2=self.norm(img_b)[:2, :, :],
+            aflow=aflow,
+            mask=mask
+        )
+        return result
+
+
+def threaded_loader(loader, iscuda, threads, batch_size=1, shuffle=True):
+    """ Get a data loader, given the dataset and some parameters.
+
+        Parameters
+        ----------
+        loader : object[i] returns the i-th training example.
+
+        iscuda : bool
+
+        batch_size : int
+
+        threads : int
+
+        shuffle : bool
+
+        Returns
+        -------
+            a multi-threaded pytorch loader.
+        """
+    return DataLoader(
+        loader,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        sampler=None,
+        num_workers=threads,
+        pin_memory=iscuda,
+        collate_fn=collate)
+
+
+def collate(batch, _use_shared_memory=True):
+    """Puts each data field into a tensor with outer dimension batch size.
+    Copied from https://github.com/pytorch in torch/utils/data/_utils/collate.py
+    """
+    import re
+    error_msg = "batch must contain tensors, numbers, dicts or lists; found {}"
+    elem_type = type(batch[0])
+    if isinstance(batch[0], torch.Tensor):
+        out = None
+        if _use_shared_memory:
+            # If we're in a background process, concatenate directly into a
+            # shared memory tensor to avoid an extra copy
+            numel = sum([x.numel() for x in batch])
+            storage = batch[0].storage()._new_shared(numel)
+            out = batch[0].new(storage)
+        return torch.stack(batch, 0, out=out)
+    elif elem_type.__module__ == 'numpy' and elem_type.__name__ != 'str_' \
+            and elem_type.__name__ != 'string_':
+        elem = batch[0]
+        assert elem_type.__name__ == 'ndarray'
+        # array of string classes and object
+        if re.search('[SaUO]', elem.dtype.str) is not None:
+            raise TypeError(error_msg.format(elem.dtype))
+        batch = [torch.from_numpy(b) for b in batch]
+        try:
+            return torch.stack(batch, 0)
+        except RuntimeError:
+            return batch
+    elif batch[0] is None:
+        return list(batch)
+    elif isinstance(batch[0], int):
+        return torch.LongTensor(batch)
+    elif isinstance(batch[0], float):
+        return torch.DoubleTensor(batch)
+    elif isinstance(batch[0], str):
+        return batch
+    elif isinstance(batch[0], dict):
+        return {key: collate([d[key] for d in batch]) for key in batch[0]}
+    elif isinstance(batch[0], (tuple, list)):
+        transposed = zip(*batch)
+        return [collate(samples) for samples in transposed]
+
+    raise TypeError((error_msg.format(type(batch[0]))))
+
+
+class SythPairLoader:
     """ On-the-fly jittering of pairs of image with dense pixel ground-truth correspondences.
 
         crop:   random crop applied to both images
@@ -32,7 +143,7 @@ class PairLoader:
         self.idx_as_rng_seed = idx_as_rng_seed  # to remove randomness
         self.what = what.split() if isinstance(what, str) else what
         self.n_samples = 5  # number of random trials per image
-        self.norm = norm_RGB
+        self.norm = normalize_img
 
     def __len__(self):
         return 1
