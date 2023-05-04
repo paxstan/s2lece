@@ -1,119 +1,130 @@
+import copy
 import os
+import open3d as o3d
 import rosbag
 import numpy as np
 import sensor_msgs.point_cloud2 as pc2
-from utils.lidar_data_conversion import LidarData, LidarSynthetic
-from utils.transform_tools import persp_apply
-import torchvision.transforms as tvf
+from PIL import Image
+from utils.data_conversion import pcd_transformation, LidarDataConverter, Imu2World, perform_kdtree
+from input_pipeline.dataset_classes import LidarData
 
-RGB_mean = [0.5]
-RGB_std = [0.125]
-
-norm_RGB = tvf.Compose([tvf.ToTensor(), tvf.Normalize(mean=RGB_mean, std=RGB_std)])
+TRANSLATION_LIDAR_IMU = np.array([-0.001, -0.00855, 0.055])
+ROTATION_LIDAR_IMU = np.array([0.7071068, -0.7071068, 0, 0])
 
 
-class Dataset(object):
-    """
-    Base class for a dataset. To be overloaded.
-    """
-    root = ''
-    img_dir = ''
-    num_img = 0
+class DatasetCreator:
+    def __init__(self, config):
+        self.config = config
+        with open(config['ground_truth_path']) as file:
+            self.ground_truth_imu = np.array([tuple(map(float, line.rstrip().split(" "))) for line in file])
+        self.ground_truth_imu = self.ground_truth_imu[self.ground_truth_imu[:, 0].argsort()]
+        self.new_gt = np.copy(self.ground_truth_imu)
+        self.lidar_data_converter = LidarDataConverter(save_dir=self.config['data_dir'])
+        # self.list_pair_dict = []
 
-    def __len__(self):
-        return self.num_img
+    def __call__(self):
+        if not os.path.exists(self.config['data_dir']):
+            print("extracting raw dataset from ros bag.....")
+            os.makedirs(self.config['data_dir'])
+            self.point_cloud_extractor()
+            self.generate_pairs(threshold=0.2)
+            print("Finished extraction of raw dataset !")
+        else:
+            print("raw dataset already extracted !")
+        return self.load_data()
 
-    def get_key(self, img_idx):
-        raise NotImplementedError()
-
-    def get_filename(self, img_idx, root=None):
-        return os.path.join(root or self.root, self.img_dir, self.get_key(img_idx))
-
-    def get_image(self, img_idx):
-        from PIL import Image
-        fname = self.get_filename(img_idx)
+    def point_cloud_extractor(self):
+        i = 0
+        list_gt = []
+        bag = rosbag.Bag(self.config['ros_bag_path'])
         try:
-            return Image.open(fname).convert('RGB')
-        except Exception as e:
-            raise IOError("Could not load image %s (reason: %s)" % (fname, str(e)))
+            for topic, msg, time in bag.read_messages(topics=['/hesai/pandar']):
+                assert i < len(self.ground_truth_imu)-1, "i should be less than length of gt file"
+                if self.ground_truth_imu[i][0] == time.to_time():
+                    data = list(pc2.read_points(msg, skip_nans=True,
+                                                field_names=['x', 'y', 'z', 'intensity', 'timestamp']))
 
-    def __repr__(self):
-        res = 'Dataset: %s\n' % self.__class__.__name__
-        res += '  %d images' % self.num_img
-        res += '\n  root: %s...\n' % self.root
-        return res
+                    # process and save point cloud in the form of npy file
+                    self.lidar_data_converter(data, i, [self.ground_truth_imu[i], self.ground_truth_imu[i + 1]])
+                    list_gt.append(self.ground_truth_imu[i])
 
+                    print(f"processed... {i}")
+                    i = i + 1
+        except AssertionError as error:
+            print(error)
 
-class SyntheticPair:
-    """ A synthetic generator of image pairs.
-            Given a normal image dataset, it constructs pairs using random homographies & noise.
-        """
+        np.save(f"{self.config['data_dir']}/ground_truth_pose.npy", np.array(list_gt))
+        bag.close()
 
-    def __init__(self, scale, distort):
-        self.distort = distort
-        self.scale = scale
+    def generate_pairs(self, threshold):
+        list_of_pairs = []
+        dt = np.dtype([('source', np.int32), ('target', np.int32), ('corres', 'object')])
+        poses = self.ground_truth_imu[:, 1:4]
+        for i, pose in enumerate(poses):
+            try:
+                pair_dict = dict()
+                pair_dict["source"] = i
+                source_scan_path = os.path.join(self.config['data_dir'], str(i))
+                source_scan_world_frame = np.load(f'{source_scan_path}/world_frame.npy')
+                distances = np.linalg.norm((pose - poses), axis=1)
+                index = np.where((distances > 0) & (distances <= 0.5))
+                for ix in index[0]:
+                    try:
+                        target_scan_path = os.path.join(self.config['data_dir'], str(ix))
+                        target_scan_world_frame = np.load(f'{target_scan_path}/world_frame.npy')
+                        distances, indices = perform_kdtree(
+                            source_scan_world_frame, target_scan_world_frame, threshold=threshold)
+                        indices[distances == np.inf] = -1
+                        if len(indices[distances != np.inf]) >= len(source_scan_world_frame) * 0.5:
+                            pair = dict()
+                            pair["source"] = i
+                            pair["target"] = ix
+                            pair["corres"] = indices
+                            list_of_pairs.append(pair)
+                    except FileNotFoundError as e:
+                        print(e)
+                print(f"corres count at {i}: {len(list_of_pairs)}")
+            except FileNotFoundError as e:
+                print(e)
+        arr = np.empty(len(list_of_pairs), dtype=dt)
+        for idx, val in enumerate(list_of_pairs):
+            arr[idx] = (val['source'], val['target'], val['corres'])
+        np.save(os.path.join(self.config['data_dir'], "corres.npy"), arr)
 
-    @staticmethod
-    def make_pair(img):
-        return img, img
+    def load_data(self):
+        i = 0
+        list_data = []
+        folder_count = len(os.listdir(self.config['data_dir']))
+        while i < folder_count:
+            path = os.path.join(self.config['data_dir'], str(i))
+            list_data.append(LidarData(path))
+            i = i + 1
+        return list_data
 
-    def get_pair(self, org_img, output=('aflow')):
-        """ Procedure:
-        This function applies a series of random transformations to one original image
-        to form a synthetic image pairs with perfect ground-truth.
-        """
-        if isinstance(output, str):
-            output = output.split()
-
-        original_img = org_img
-        scaled_image = self.scale(original_img)
-        scaled_image, scaled_image2 = self.make_pair(scaled_image['img'])
-        # scaled_image = original_img
-        rand_tilt = self.distort[0](inp=dict(img=scaled_image2, persp=(1, 0, 0, 0, 1, 0, 0, 0)))
-        rand_noise = self.distort[1](inp=rand_tilt)
-        scaled_and_distorted_image = self.distort[2](inp=rand_noise)
-        # scaled_and_distorted_image = self.distort(
-        #     dict(img=scaled_image2, persp=(1, 0, 0, 0, 1, 0, 0, 0)))
-        W, H = scaled_image.size
-        trf = scaled_and_distorted_image['persp']
-
-        meta = dict()
-        meta['mask'] = org_img['mask']
-        if 'aflow' in output or 'flow' in output:
-            # compute optical flow
-            xy = np.mgrid[0:H, 0:W][::-1].reshape(2, H * W).T
-            aflow = np.float32(persp_apply(trf, xy).reshape(H, W, 2))
-            meta['flow'] = aflow - xy.reshape(H, W, 2)
-            meta['aflow'] = aflow
-
-        if 'homography' in output:
-            meta['homography'] = np.float32(trf + (1,)).reshape(3, 3)
-
-        return scaled_image, scaled_and_distorted_image['img'], meta
-
-
-def point_cloud_extractor(path, data_dir):
-    bag = rosbag.Bag(path)
-    lidar_scan = LidarData()
-    count = 1
-    for topic, msg, t in bag.read_messages(topics=['/hesai/pandar']):
-        cloud_data = list(pc2.read_points(msg, skip_nans=True, field_names=['x', 'y', 'z', 'intensity']))
-        points = np.array(cloud_data)
-        lidar_scan.point_cloud_to_np_array(points)
-        save_dir = os.path.join(data_dir, str(count))
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-        np.save(os.path.join(save_dir, "range.npy"), lidar_scan.proj_range)
-        np.save(os.path.join(save_dir, "intensity.npy"), lidar_scan.proj_intensity)
-        np.save(os.path.join(save_dir, "valid_mask.npy"), lidar_scan.proj_mask)
-        np.save(os.path.join(save_dir, "xyz.npy"), lidar_scan.proj_xyz)
-        count = count + 1
-    bag.close()
+    def join_corres(self):
+        i = 0
+        folder_count = len(os.listdir(self.config['data_dir']))
+        dt = np.dtype([('source', np.int32), ('target', np.int32), ('corres', 'object')])
+        while i < folder_count:
+            path = os.path.join(self.config['data_dir'], str(i))
+            corres = np.load(f'{path}/corres.npy')
 
 
-def is_pair(x):
-    if isinstance(x, (tuple, list)) and len(x) == 2:
-        return True
-    if isinstance(x, np.ndarray) and x.ndim == 1 and x.shape[0] == 2:
-        return True
-    return False
+def random_image_loader(data_dir):
+    # random_id = random.randint(1, 2277)
+    random_id = 1
+    range_array = np.load(f'{data_dir}/{random_id}/range.npy')
+    # intensity_array = np.load(f'{data_dir}/{random_id}/intensity.npy')
+    reflectivity_array = np.zeros(range_array.shape)
+    mask_array = np.load(f'{data_dir}/{random_id}/valid_mask.npy')
+
+    range_im = ((range_array / 8. + 1.) / 2. * 255).astype(np.uint8)
+    # intensity_im = ((intensity_array / 8. + 1.) / 2. * 255).astype(np.uint8)
+    reflectivity_im = ((reflectivity_array / 8. + 1.) / 2. * 255).astype(np.uint8)
+
+    # img_stack = np.stack((range_im, intensity_im, reflectivity_im), axis=2)
+
+    # stacked_img = Image.fromarray(img_stack, mode="RGB")
+    img = Image.fromarray(range_im)
+
+    return img, mask_array
