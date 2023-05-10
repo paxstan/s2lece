@@ -37,12 +37,14 @@ class PairLoader:
         img_b = np.array(img_b)
         aflow = np.float32(metadata['aflow'])
         mask = metadata.get('mask', np.ones(aflow.shape[:2], np.uint8))
+        org_flow = np.float32(metadata['org_flow'])
 
         result = dict(
-            img1=self.norm(img_a)[:2, :, :],
-            img2=self.norm(img_b)[:2, :, :],
+            img1=self.norm(img_a),
+            img2=self.norm(img_b),
             aflow=aflow,
-            mask=mask
+            mask=mask,
+            org_flow=org_flow
         )
         return result
 

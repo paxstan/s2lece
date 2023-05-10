@@ -64,12 +64,6 @@ class PatchNet(BaseNet):
         if relu: self.ops.append(nn.ReLU(inplace=True))
         self.curchan = outd
 
-    def forward_one(self, x):
-        assert self.ops, "You need to add convolutions first"
-        for n, op in enumerate(self.ops):
-            x = op(x)
-        return self.normalize(x)
-
 
 class Quad_L2Net(PatchNet):
     """ Same than L2_Net, but replace the final 8x8 conv by 3 successive 2x2 convs.
@@ -105,6 +99,7 @@ class Quad_L2Net_ConfCFS (Quad_L2Net):
         assert self.ops, "You need to add convolutions first"
         for op in self.ops:
             x = op(x)
+            # print(x.detach().numpy()[0].shape)
         # compute the confidence maps
         ureliability = self.clf(x**2)
         urepeatability = self.sal(x**2)

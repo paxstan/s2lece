@@ -35,7 +35,11 @@ class FullSampler(nn.Module):
         return grid
 
     def _warp(self, feats, confs, aflow):
-        if isinstance(aflow, tuple): return aflow  # result was precomputed
+        if isinstance(aflow, tuple):
+            print("flow was precomputed")
+            return aflow  # result was precomputed
+        else:
+            print("flow is again computed")
         feat1, feat2 = feats
         conf1, conf2 = confs if confs else (None, None)
 
