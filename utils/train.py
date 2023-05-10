@@ -86,4 +86,38 @@ class MyTrainer(Trainer):
         return loss, details
 
 
+class TestTrainer(nn.Module):
+    def __init__(self, net, loader, loss):
+        nn.Module.__init__(self)
+        self.net = net
+        self.loader = loader
+        self.loss_func = loss
 
+    def __call__(self):
+        self.net.train()
+
+        stats = defaultdict(list)
+
+        for iter, inputs in enumerate(tqdm(self.loader)):
+            inputs = self.todevice(inputs)
+            self.forward_backward(inputs)
+
+    def iscuda(self):
+        return next(self.net.parameters()).device != torch.device('cpu')
+
+    def todevice(self, x):
+        if isinstance(x, dict):
+            return {k: self.todevice(v) for k, v in x.items()}
+        if isinstance(x, (tuple, list)):
+            return [self.todevice(v) for v in x]
+
+        if self.iscuda():
+            return x.contiguous().cuda(non_blocking=True)
+        else:
+            return x.cpu()
+
+    def forward_backward(self, inputs):
+        output = self.net(imgs=[inputs.pop('img1'), inputs.pop('img2')])
+        allvars = dict(inputs, **output)
+        loss = self.loss_func(**allvars)
+        print(loss)

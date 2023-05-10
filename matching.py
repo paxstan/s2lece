@@ -1,5 +1,5 @@
 import extract
-from input_pipeline.dataset_classes import SyntheticPair
+from input_pipeline.dataset import SyntheticPairDataset
 import numpy as np
 import cv2
 from utils.data_conversion import project_point_cloud
@@ -45,7 +45,7 @@ def match_fun(config):
     net = net.cuda()
     show = True
 
-    lidar_pair_dt = SyntheticPair(root=config["data_dir"])
+    lidar_pair_dt = SyntheticPairDataset(root=config["data_dir"])
     idx1 = "0"
     imgA = lidar_pair_dt.get_image(idx1)
     maskA = lidar_pair_dt.get_valid_range_mask(idx1)
@@ -94,8 +94,8 @@ def match_fun(config):
         # matches[:, 1] = matches[:, 1] + xyzA_sort.shape[0]  # select matches of second image
         match_lines.lines = o3d.utility.Vector2iVector(matches)
         match_lines.paint_uniform_color([0, 1, 0])
-        o3d.visualization.draw_geometries([reference_pc, test_pc, match_lines])
-        draw_registration_result(reference_pc, test_pc, tf)
+        # o3d.visualization.draw_geometries([reference_pc, test_pc, match_lines])
+        # draw_registration_result(reference_pc, test_pc, tf)
 
         def draw_circles(xys, img, matches):
             x = xys[matches, 0].astype(int)

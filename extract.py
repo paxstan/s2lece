@@ -6,7 +6,7 @@ from PIL import Image
 from utils import common
 from input_pipeline.dataloader import normalize_img
 from models.patchnet import *
-from input_pipeline.dataset_classes import SyntheticPair
+from input_pipeline.dataset import SyntheticPairDataset
 import time
 import open3d as o3d
 
@@ -150,7 +150,7 @@ def extract_keypoints(img, config, net):
 
 
 def test_model(config):
-    lidar_pair_dt = SyntheticPair(root=config["data_dir"])
+    lidar_pair_dt = SyntheticPairDataset(root=config["data_dir"])
     idx = "0"
     img = lidar_pair_dt.get_image(idx)
     mask = lidar_pair_dt.get_valid_range_mask(idx)
