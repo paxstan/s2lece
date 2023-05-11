@@ -1,7 +1,7 @@
 #general
 save_path: 'runs/run.pt'
 gpu:
-  - -1
+  - 0
 
 #dataset
 ros_bag_path: '../../data/hilti/rosbag/exp04_imu/exp04_construction_upper_level.bag'

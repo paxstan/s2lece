@@ -30,7 +30,7 @@ class PixelAPLoss(nn.Module):
     def forward(self, descriptors, aflow, **kw):
         # subsample things
         scores, gt, msk, qconf = self.sampler(descriptors, kw.get('reliability'), aflow)
-        print(scores, gt, msk, qconf)
+        # print(scores, gt, msk, qconf)
 
         # compute pixel-wise AP
         n = qconf.numel()

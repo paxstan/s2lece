@@ -124,6 +124,7 @@ class RealPairDataset(LidarBase):
         img1 = Image.fromarray(img1.reshape(h1, w1))
 
         meta = {'aflow': flow.transpose((2, 0, 1)), 'mask': mask, 'org_flow': org_flow}
+        # meta = {'aflow': flow.transpose((2, 0, 1)), 'mask': mask}
         return img1, img2, meta
 
     def get_pixel_match_old(self, mask2, source, target):
