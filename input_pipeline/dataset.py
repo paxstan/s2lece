@@ -127,65 +127,6 @@ class RealPairDataset(LidarBase):
         # meta = {'aflow': flow.transpose((2, 0, 1)), 'mask': mask}
         return img1, img2, meta
 
-    def get_pixel_match_old(self, mask2, source, target):
-        xyz1 = np.load(os.path.join(self.root, source, 'xyz_o.npy'))
-        xyz2 = np.load(os.path.join(self.root, target, 'xyz_o.npy'))
-
-        pose1 = self.gt_pose[int(source), 1:]
-        pose2 = self.gt_pose[int(target), 1:]
-        tf1 = self.get_homog_matrix(pose1)
-        tf2 = self.get_homog_matrix(pose2)
-        # get relative transformation between img1 and img2
-        tf = np.linalg.inv(tf1) @ tf2
-
-        # Make position vectors homogeneous
-        pos1 = np.append(xyz1, np.ones_like(xyz1[:, :, 0:1]), axis=2)
-        h1, w1, _ = pos1.shape
-        h2, w2 = mask2.shape
-        # transform all position vectors from img1 to frame2
-        pos1 = pos1.reshape((h1 * w1, 4)).transpose((1, 0))
-        xyz_t = np.dot(tf, pos1).transpose((1, 0))[:, :3]  # ones added in 201 will be removed here
-
-        # get indices of pixel correspondences
-        proj_x1, proj_y1, depth1 = project_point_cloud(xyz_t, height=h2, width=w2)
-        proj_idx_1 = np.array((proj_y1, proj_x1))
-        # create flow matrix needed for training from pixel correspondences
-        flow = np.zeros((h1, w1, 2))
-        x_img = proj_idx_1[0, :].reshape(h1, w1)
-        y_img = proj_idx_1[1, :].reshape(h1, w1)
-        flow[:, :, 0] = x_img
-        flow[:, :, 1] = y_img
-
-        # get mask of which pixels in image1 are valid in image2 (out of bounds and invalid defined by mask2)
-        x_img = flow[:, :, 0].reshape(-1).astype(int)
-        y_img = flow[:, :, 1].reshape(-1).astype(int)
-        mask_valid_in_2 = np.zeros(h1 * w1, dtype=bool)
-        mask_in_bound = (y_img >= 0) * (y_img < h2) * (x_img >= 0) * (x_img < w2)
-        mask_valid_in_2[mask_in_bound] = mask2[y_img[mask_in_bound], x_img[mask_in_bound]]
-
-        # get ranges of valid image2 points
-        r2 = np.linalg.norm(xyz2[y_img[mask_valid_in_2], x_img[mask_valid_in_2]], axis=1)
-        # get corresponding transformed ranges of image1
-        r1_t = np.linalg.norm(xyz_t.reshape(-1, 3)[mask_valid_in_2], axis=1)
-
-        # check if points in image1 are occluded in 2
-        d = (r2 - r1_t) / r1_t
-        # 20% threshold when close to each other
-        not_occluded = d > -0.2
-        # define occlusion mask
-        occlusion_mask = np.ones((h1 * w1), dtype=bool)
-        occlusion_mask[mask_valid_in_2] = not_occluded
-
-        # set mask_valid_in_2 false when occluded
-        mask_valid_in_2 = np.logical_and(mask_valid_in_2, occlusion_mask)
-        mask_valid_in_2 = mask_valid_in_2.reshape(h1, w1)
-
-        # mask flow according to occluded points
-        flow[:, :, 0][np.invert(mask_valid_in_2)] = np.nan
-        flow[:, :, 1][np.invert(mask_valid_in_2)] = np.nan
-
-        return flow, mask_valid_in_2
-
     def get_pixel_match(self, mask2, source, target, corres, shape1):
         h1, w1 = shape1
         h2, w2 = mask2.shape
@@ -304,3 +245,34 @@ class LidarData:
         self.range_data = np.load(f'{path}/range.npy') if os.path.exists(f'{path}/range.npy') else None
         self.xyz_data = np.load(f'{path}/xyz.npy') if os.path.exists(f'{path}/xyz.npy') else None
         self.valid_mask = np.load(f'{path}/valid_mask.npy') if os.path.exists(f'{path}/valid_mask.npy') else None
+
+
+class SingleDataset(LidarBase):
+    def __init__(self, root, scale=None, distort=None, crop=False):
+        LidarBase.__init__(self, crop)
+        self.root = root
+        self.scale = scale
+        self.distort = distort
+        self.npairs = self.get_count()
+
+    def get_count(self):
+        abspath = os.path.abspath(self.root)
+        listdir = os.listdir(abspath)
+        return sum([os.path.isdir(os.path.join(abspath + "/" + dr)) for dr in listdir])
+
+    def __len__(self):
+        return self.npairs
+
+    def get_item(self, idx):
+        img = self.load_np_file(os.path.join(self.root, str(idx), 'range.npy'))
+        mask = self.load_np_file(os.path.join(self.root, str(idx), 'valid_mask.npy')).reshape(-1)
+
+        h1, w1 = img.shape
+        img = img.reshape(-1)
+        img[np.invert(mask)] = 0
+        img = Image.fromarray(img.reshape(h1, w1))
+
+        return img
+
+
+

@@ -2,14 +2,9 @@
 # CC BY-NC-SA 3.0
 # Available only for non-commercial use
 
-import pdb
-
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image
-import numpy as np
-from models.sampler import FullSampler
+from models.old.sampler import FullSampler
 
 
 class CosimLoss(nn.Module):

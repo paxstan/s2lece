@@ -5,6 +5,7 @@
 import os, pdb#, shutil
 import numpy as np
 import torch
+import matplotlib.pyplot as plt
 
 
 def mkdir_for(file_path):
@@ -38,3 +39,27 @@ def torch_set_gpu(gpus):
         print( 'Launching on CPU' )
 
     return cuda
+
+
+def patch_extractor(image, patch_size=32, stride=32):
+    patches = []
+    for i in range(0, image.size(3)-patch_size+1, stride):
+        patch = image[:, :, :, i:i+patch_size]
+        patches.append(patch)
+    return patches
+
+
+def compare_images(in_img, out_img, out_channel=0):
+    in_img = in_img.detach().squeeze().numpy()
+    out_img = out_img.detach().squeeze().numpy()
+    in_img = (in_img - in_img.min()) / (in_img.max() - in_img.min())
+    if out_img.ndim == 3:
+        out_img = out_img[out_channel, :, :]
+    out_img = (out_img - out_img.min()) / (out_img.max() - out_img.min())
+    fig, axes = plt.subplots(1, 2)
+    axes[0].imshow(in_img)
+    axes[1].imshow(out_img)
+    plt.show()
+
+
+

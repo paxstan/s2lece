@@ -2,11 +2,9 @@
 # CC BY-NC-SA 3.0
 # Available only for non-commercial use
 
-import pdb
 import torch.nn as nn
-import torch.nn.functional as F
 
-from models.ap_loss import APLoss
+from models.old.ap_loss import APLoss
 
 
 class PixelAPLoss(nn.Module):

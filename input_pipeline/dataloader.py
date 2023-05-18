@@ -5,6 +5,7 @@ from utils.transform_tools import persp_apply
 import torchvision.transforms as tvf
 import torch
 from torch.utils.data import DataLoader
+from utils.common import patch_extractor
 
 img_mean = [0.5]
 img_std = [0.125]
@@ -33,20 +34,45 @@ class PairLoader:
         # aflow contains pixel coordinates indicating where each
         # pixel from the left image ended up in the right image
         # as (x,y) pairs, but its shape is (H,W,2)
-        img_a = np.array(img_a)
-        img_b = np.array(img_b)
+        img_a = self.norm(np.array(img_a))
+        img_b = self.norm(np.array(img_b))
         aflow = np.float32(metadata['aflow'])
         mask = metadata.get('mask', np.ones(aflow.shape[:2], np.uint8))
         org_flow = np.float32(metadata['org_flow'])
+        # img_a_patch = patch_extractor(torch.unsqueeze(torch.tensor(img_a), 0))
+        # img_b_patch = patch_extractor(torch.unsqueeze(torch.tensor(img_b), 0))
 
         result = dict(
-            img1=self.norm(img_a),
-            img2=self.norm(img_b),
+            img1=img_a,
+            img2=img_b,
             aflow=aflow,
             mask=mask,
-            org_flow=org_flow
+            org_flow=org_flow,
+            # img1_patch=img_a_patch,
+            # img2_patch=img_b_patch
         )
         return result
+
+
+class SingleLoader:
+    def __init__(self, dataset, crop, scale, distort):
+        assert hasattr(dataset, 'npairs')
+        assert hasattr(dataset, 'get_item')
+        self.dataset = dataset
+        self.crop = crop
+        self.scale = scale
+        self.distort = distort
+        self.n_samples = 5  # number of random trials per image
+        self.norm = normalize_img
+
+    def __len__(self):
+        assert len(self.dataset) == self.dataset.npairs, "not same length"  # and not nimg
+        return len(self.dataset)
+
+    def __getitem__(self, i):
+        # Retrieve an image pair and their absolute flow
+        img = self.dataset.get_item(i)
+        return {'img': self.norm(np.array(img))}
 
 
 def threaded_loader(loader, iscuda, threads, batch_size=1, shuffle=True):
@@ -351,3 +377,5 @@ class SythPairLoader:
             except NameError:
                 pass
         return result
+
+

@@ -1,7 +1,7 @@
 #general
-save_path: 'runs/run.pt'
+save_path: 'runs/run_encoder.pt'
 gpu:
-  - 0
+  - -1
 
 #dataset
 ros_bag_path: '../../data/hilti/rosbag/exp04_imu/exp04_construction_upper_level.bag'

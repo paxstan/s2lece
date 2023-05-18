@@ -33,7 +33,7 @@ class DatasetCreator:
         bag = rosbag.Bag(self.config['ros_bag_path'])
         try:
             for topic, msg, time in bag.read_messages(topics=['/hesai/pandar']):
-                assert i < 10, "i should be less than length of gt file"
+                assert i < 51, "i should be less than length of gt file"
                 if self.ground_truth_imu[i][0] == time.to_time():
                     data = list(pc2.read_points(msg, skip_nans=True,
                                                 field_names=['x', 'y', 'z', 'timestamp']))

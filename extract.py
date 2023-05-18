@@ -4,11 +4,12 @@ from PIL import Image
 from input_pipeline.dataset import SyntheticPairDataset
 import open3d as o3d
 from utils.extract_keypoints import *
-from models.patchnet import *
+from models.old.patchnet import *
+from models.local_net_ae import ConvolutionAE
 
 
-def load_network(model_fn):
-    checkpoint = torch.load(model_fn)
+def load_network(model_path):
+    checkpoint = torch.load(model_path)
     print("\n>> Creating net = " + checkpoint['net'])
     net = eval(checkpoint['net'])
     nb_of_weights = common.model_size(net)
