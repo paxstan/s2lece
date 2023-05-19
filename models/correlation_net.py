@@ -11,13 +11,13 @@ class CorrelationNetwork(nn.Module):
     def __init__(self, patch_size=1):
         super(CorrelationNetwork, self).__init__()
         self.conv_redir = nn.Sequential(
-            nn.Conv2d(64, 32, kernel_size=1, stride=1, padding=0),
+            nn.Conv2d(256, 32, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(0.1, inplace=True)
         )
 
         self.conv3_1 = nn.Sequential(
-            nn.Conv2d(473, 256, kernel_size=(1, 3), stride=(1, 1), padding=(0, 1)),
+            nn.Conv2d(64, 256, kernel_size=(1, 3), stride=(1, 1), padding=(0, 1)),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.1, inplace=True)
         )  # [1, 256. 32, 1024]
@@ -95,41 +95,55 @@ class CorrelationNetwork(nn.Module):
         return img
 
     @staticmethod
-    def correlate(input1, input2):
-        out_corr = spatial_correlation_sample(input1,
-                                              input2,
-                                              kernel_size=1,
-                                              patch_size=21,
-                                              stride=1,
-                                              padding=0,
-                                              dilation_patch=2)
-        # collate dimensions 1 and 2 in order to be treated as a
-        # regular 4D tensor
-        b, ph, pw, h, w = out_corr.size()
-        out_corr = out_corr.view(b, ph * pw, h, w) / input1.size(1)
-        return F.leaky_relu_(out_corr, 0.1)
+    def correlate(input1, input2, patch_size=32, stride=32):
+        correlation_tensor = torch.Tensor()
+        _, c, h, w = input1.size()
+        for i in range(0, w - patch_size + 1, stride):
+            patch_input2 = input2[:, :, :, i: i + patch_size]
+            patch_input2 = patch_input2.repeat(1, 1, 1, 32)
+            # each pixel in input one against all pixel in input2 -> produce a channel
+            out_corr2 = spatial_correlation_sample(input1,
+                                                   patch_input2,
+                                                   kernel_size=1,
+                                                   patch_size=1,
+                                                   stride=1,
+                                                   padding=0,
+                                                   dilation_patch=2)
+            # collate dimensions 1 and 2 in order to be treated as a
+            # regular 4D tensor
+            b, ph, pw, h, w = out_corr2.size()
+            out_corr2 = out_corr2.view(b, ph * pw, h, w) / input1.size(1)  # [1, 1, 32, 1024]
+            F.leaky_relu_(out_corr2, 0.1)
+            correlation_tensor = torch.concat((correlation_tensor, out_corr2), dim=1)
+        return correlation_tensor  # [1, 32, 32, 1024]
 
     def forward(self, x1, x2, og_flow, flow):
 
         # out_correlation = [self.correlate(x1_patch, y1_patch) for x1_patch in x1 for y1_patch in x2]
         # out_correlation = []
         flow_gt = self.predict_flow_truth(flow)
-        fill_value = torch.nanmean(og_flow)
-        og_flow[og_flow.isnan()] = fill_value
+        # fill_value = torch.nanmean(og_flow)
+        # og_flow[og_flow.isnan()] = fill_value
 
         org_flow = self.visualize_flow(og_flow)
         flow_2_gt = self.visualize_flow(flow_gt)
+
         out_correlation = torch.Tensor()
-        # x1_redir = []
         x1_redir = torch.Tensor()
+        # for i in range(len(x1)):  # when patch_size=32, takes long time, patch_size=1 [1, 32, 32, 1024]
+        #     sub_correlation = torch.Tensor()
+        #     for j in range(len(x2)):
+        #         sub_correlation = torch.concat((sub_correlation, self.correlate(x1[i], x2[j])), dim=1)
+        #     out_correlation = torch.concat((out_correlation, sub_correlation), dim=-1)
+        #     x1_redir = torch.concat((x1_redir, self.conv_redir(x1[i])), dim=-1)
 
-        for i in range(len(x1)):
-            # out_correlation.append(self.correlate(x1[i], x2[i]))
-            out_correlation = torch.concat((out_correlation, self.correlate(x1[i], x2[i])), dim=-1)
-            x1_redir = torch.concat((x1_redir, self.conv_redir(x1[i])), dim=-1)
-            # x1_redir.append(self.conv_redir(x1[i]))
+        # for i in range(len(x1)):
+        #     out_correlation = torch.concat((out_correlation, self.correlate(x1[i], x2[i])), dim=-1)
+        #     x1_redir = torch.concat((x1_redir, self.conv_redir(x1[i])), dim=-1)
 
-        # x1_redir = self.corr_redir(x1)
+        out_correlation = self.correlate(x1, x2)
+        x1_redir = self.conv_redir(x1)
+
         out_concat = torch.cat([x1_redir, out_correlation], dim=1)  # [1, 473, 32, 1024]
 
         out_conv3 = self.conv3_1(out_concat)  # [1, 256, 32, 1024]

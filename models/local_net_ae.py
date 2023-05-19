@@ -55,14 +55,16 @@ class Autoencoder(nn.Module):
 
     def forward(self, x):
         x_patch = patch_extractor(x)
-        # self.view_result(x.clone())
-        out_encoder = [self.encoder(patch) for patch in x_patch]
+        out_encoded = torch.Tensor()
+        for patch in x_patch:
+            out_encoded = torch.concat((out_encoded, self.encoder(patch)), dim=-1)
+        # out_encoder = [self.encoder(patch) for patch in x_patch]
         # compare_images(x_patch[0], out_encoder[0])
         # self.view_result(x.clone().permute(1, 3, 2, 0))
         # out_decoder = [self.decoder(patch) for patch in out_encoder]
         # compare_images(x_patch[0], out_decoder[0])
         # self.view_result(x.clone())
-        return out_encoder
+        return out_encoded
 
 
 class ConvolutionAE(Autoencoder):
@@ -82,30 +84,13 @@ class ConvolutionAE(Autoencoder):
             nn.BatchNorm2d(64),
             nn.LeakyReLU(0.1, inplace=True),
 
-            # for 32*1024
-            # nn.Conv2d(1, 16, kernel_size=(1, 5), stride=(1, 2), padding=(0, 2)),  # [1, 16, 32, 1024]
-            # nn.BatchNorm2d(16),
-            # nn.LeakyReLU(0.1, inplace=True),
-            # # nn.MaxPool2d(kernel_size=(1, 3), stride=(1, 2)),
-            #
-            # nn.Conv2d(16, 32, kernel_size=(1, 5), stride=(1, 2), padding=(0, 2)),
-            # nn.BatchNorm2d(32),
-            # nn.LeakyReLU(0.1, inplace=True),
-            # nn.MaxPool2d(kernel_size=(2, 3), stride=(1, 2)),
-            #
-            # nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
-            # nn.BatchNorm2d(64),
-            # nn.LeakyReLU(0.1, inplace=True),
-            # # nn.MaxPool2d(kernel_size=2, stride=1),
-            #
-            # nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
-            # nn.BatchNorm2d(128),
-            # nn.LeakyReLU(0.1, inplace=True),
-            # # nn.MaxPool2d(kernel_size=2, stride=1),
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.1, inplace=True),
 
-            # nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
-            # nn.BatchNorm2d(256),
-            # nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(0.1, inplace=True),
         )
 
         self.decoder = nn.Sequential(

@@ -118,7 +118,7 @@ class RealPairDataset(LidarBase):
         mask = (mask1 * mask_valid_in_2).astype(bool)
 
         # set flow for invalid pixels to nan, which is ignored during training
-        flow[~mask, :] = np.nan
+        flow[~mask, :] = 0
 
         # crop image
         img2 = Image.fromarray(img2.reshape(h1, w1))
@@ -186,8 +186,8 @@ class RealPairDataset(LidarBase):
         mask_valid_in_2 = mask_valid_in_2.reshape(h1, w1)
 
         # mask flow according to occluded points
-        flow[:, :, 0][np.invert(mask_valid_in_2)] = np.nan
-        flow[:, :, 1][np.invert(mask_valid_in_2)] = np.nan
+        flow[:, :, 0][np.invert(mask_valid_in_2)] = 0
+        flow[:, :, 1][np.invert(mask_valid_in_2)] = 0
 
         return flow, mask_valid_in_2, org_flow
 
