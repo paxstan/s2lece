@@ -192,3 +192,45 @@ def show_flow(img0, img1, flow, mask=None):
     cid_move = fig.canvas.mpl_connect('motion_notify_event', motion_notify_callback)
     print("Move your mouse over the images to show matches (ctrl-C to quit)")
     pl.show(block=True)
+
+
+def flow2rgb(flow_map, max_value):
+    flow_map_np = flow_map.detach().squeeze().numpy()
+    _, h, w = flow_map_np.shape
+    flow_map_np[:, (flow_map_np[0] == 0) & (flow_map_np[1] == 0)] = float('nan')
+    rgb_map = np.ones((3, h, w)).astype(np.float32)
+    if max_value is not None:
+        normalized_flow_map = flow_map_np / max_value
+    else:
+        normalized_flow_map = flow_map_np / (np.nanmax(np.abs(flow_map_np)))
+    rgb_map[0] += normalized_flow_map[0]
+    rgb_map[1] -= 0.5 * (normalized_flow_map[0] + normalized_flow_map[1])
+    rgb_map[2] += normalized_flow_map[1]
+    return rgb_map.clip(0, 1)
+
+
+def display_comparison(**kwargs):
+    # Create subplots
+    fig, axes = pl.subplots(len(kwargs), 1, sharex=True, sharey=True)
+
+    # Connect event handlers for zooming
+    def on_xlim_changed(ax):
+        for a in axes:
+            if a is not ax:
+                a.set_xlim(ax.get_xlim())
+
+    def on_ylim_changed(ax):
+        for a in axes:
+            if a is not ax:
+                a.set_ylim(ax.get_ylim())
+
+    for index, (key, value) in enumerate(kwargs.items()):
+        axes[index].imshow(value, cmap='gray')
+        axes[index].set_title(key)
+        h, w, _ = value.shape
+        # axes[index].set_xlim([0, w])
+        # axes[index].set_ylim([0, h])
+
+    # fig.canvas.mpl_connect('xlim_changed', on_xlim_changed)
+    # fig.canvas.mpl_connect('ylim_changed', on_ylim_changed)
+    pl.show()

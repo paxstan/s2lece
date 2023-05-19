@@ -2,15 +2,16 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from spatial_correlation_sampler import spatial_correlation_sample
-from visualization.visualization import flow_to_color
+from visualization.visualization import flow_to_color, flow2rgb, display_comparison
 
 
 class CorrelationNetwork(nn.Module):
     def __init__(self, patch_size=1):
         super(CorrelationNetwork, self).__init__()
-        self.corr_redir = nn.Sequential(
-            nn.Conv2d(32, 32, kernel_size=(1, 3), stride=(1, 1), padding=(0, 1)),
+        self.conv_redir = nn.Sequential(
+            nn.Conv2d(64, 32, kernel_size=1, stride=1, padding=0),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(0.1, inplace=True)
         )
@@ -19,49 +20,59 @@ class CorrelationNetwork(nn.Module):
             nn.Conv2d(473, 256, kernel_size=(1, 3), stride=(1, 1), padding=(0, 1)),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.1, inplace=True)
-        )  # [1, 256. 30, 63]
+        )  # [1, 256. 32, 1024]
 
         self.conv4 = nn.Sequential(
             nn.Conv2d(256, 512, kernel_size=(1, 3), stride=(2, 4), padding=(0, 1)),
             nn.BatchNorm2d(512),
             nn.LeakyReLU(0.1, inplace=True)
-        )  # [1, 512, 15, 16]
+        )  # [1, 512, 16, 256]
 
         self.conv4_1 = nn.Sequential(
             nn.Conv2d(512, 512, kernel_size=(1, 3), stride=(1, 1), padding=(0, 1)),
             nn.BatchNorm2d(512),
             nn.LeakyReLU(0.1, inplace=True)
-        )  # [1, 512, 15, 16]
+        )  # [1, 512, 16, 256]
 
         self.conv5 = nn.Sequential(
             nn.Conv2d(512, 1024, kernel_size=(1, 3), stride=(2, 4), padding=(0, 1)),
             nn.BatchNorm2d(1024),
             nn.LeakyReLU(0.1, inplace=True)
-        )  # [1, 1024, 8, 4]
+        )  # [1, 1024, 8, 64]
 
         self.conv5_1 = nn.Sequential(
             nn.Conv2d(1024, 1024, kernel_size=(1, 3), stride=(1, 1), padding=(0, 1)),
             nn.BatchNorm2d(1024),
             nn.LeakyReLU(0.1, inplace=True)
-        )  # [1, 1024, 8, 4]
+        )  # [1, 1024, 8, 64]
 
-        self.predict_flow5 = self.predict_flow(1024)  # [1, 2, 8, 4]
+        self.predict_flow5 = nn.Conv2d(1024, 2, kernel_size=(1, 3),
+                                       stride=(1, 1), padding=(0, 1))  # [1, 2, 8, 64]
+
         self.upsampled_flow5_to_4 = nn.ConvTranspose2d(in_channels=2, out_channels=2,
                                                        kernel_size=(1, 3), stride=(2, 4),
-                                                       padding=(0, 1), output_padding=(0, 1))  # [1, 2, 15, 14]
+                                                       padding=(0, 1), output_padding=(1, 3))  # [1, 2, 15, 14]
         self.deconv5 = nn.Sequential(
-            nn.ConvTranspose2d(1024, 512, kernel_size=(1, 3), stride=(2, 4), padding=(0, 1)),
+            nn.ConvTranspose2d(1024, 512, kernel_size=(1, 3), stride=(2, 4), padding=(0, 1), output_padding=(1, 3)),
             nn.LeakyReLU(0.1, inplace=True)
         )  # [1, 512, 15, 13]
 
-        self.predict_flow4 = self.predict_flow(770)
-        self.upsampled_flow4_to_3 = nn.ConvTranspose2d(2, 2, 4, 2, 1, bias=False)
+        self.predict_flow4 = nn.Conv2d(1026, 2, kernel_size=(1, 3),
+                                       stride=(1, 1), padding=(0, 1))
+
+        self.upsampled_flow4_to_3 = nn.ConvTranspose2d(in_channels=2, out_channels=2,
+                                                       kernel_size=(1, 3), stride=(2, 4),
+                                                       padding=(0, 1), output_padding=(1, 3))
         self.deconv4 = nn.Sequential(
-            nn.ConvTranspose2d(512, 256, kernel_size=(1, 3), stride=(1, 1), padding=(0, 1)),
+            nn.ConvTranspose2d(512, 256, kernel_size=(1, 3), stride=(2, 4), padding=(0, 1), output_padding=(1, 3)),
             nn.LeakyReLU(0.1, inplace=True)
         )
 
-        self.predict_flow3 = self.predict_flow(386)
+        self.predict_flow3 = nn.Conv2d(514, 2, kernel_size=(1, 3),
+                                       stride=(1, 1), padding=(0, 1))
+
+        self.predict_flow_truth = nn.Conv2d(3, 2, kernel_size=(1, 1),
+                                            stride=(1, 1), padding=(0, 1))
 
     @staticmethod
     def predict_flow(in_planes):
@@ -76,9 +87,12 @@ class CorrelationNetwork(nn.Module):
 
     @staticmethod
     def visualize_flow(flow):
-        flow = flow.detach().squeeze().numpy().transpose(1, 2, 0)
-        img = flow_to_color(flow)
-        plt.imshow(img)
+        # flow = flow.detach().squeeze().numpy().transpose(1, 2, 0)
+        # img = flow_to_color(flow)
+        rgb_flow = flow2rgb(20 * flow, max_value=None)
+        img = (rgb_flow * 255).astype(np.uint8).transpose(1, 2, 0)
+        # plt.imshow(img)
+        return img
 
     @staticmethod
     def correlate(input1, input2):
@@ -95,42 +109,70 @@ class CorrelationNetwork(nn.Module):
         out_corr = out_corr.view(b, ph * pw, h, w) / input1.size(1)
         return F.leaky_relu_(out_corr, 0.1)
 
-    def forward(self, x1, x2):
-        # out = F.conv2d(x1, x2)
-        # mean1 = x1.mean(dim=(0, 1))
-        # mean2 = x2.mean(dim=(0, 1))
+    def forward(self, x1, x2, og_flow, flow):
+
+        # out_correlation = [self.correlate(x1_patch, y1_patch) for x1_patch in x1 for y1_patch in x2]
+        # out_correlation = []
+        flow_gt = self.predict_flow_truth(flow)
+        fill_value = torch.nanmean(og_flow)
+        og_flow[og_flow.isnan()] = fill_value
+
+        org_flow = self.visualize_flow(og_flow)
+        flow_2_gt = self.visualize_flow(flow_gt)
+        out_correlation = torch.Tensor()
+        # x1_redir = []
+        x1_redir = torch.Tensor()
+
+        for i in range(len(x1)):
+            # out_correlation.append(self.correlate(x1[i], x2[i]))
+            out_correlation = torch.concat((out_correlation, self.correlate(x1[i], x2[i])), dim=-1)
+            x1_redir = torch.concat((x1_redir, self.conv_redir(x1[i])), dim=-1)
+            # x1_redir.append(self.conv_redir(x1[i]))
+
+        # x1_redir = self.corr_redir(x1)
+        out_concat = torch.cat([x1_redir, out_correlation], dim=1)  # [1, 473, 32, 1024]
+
+        out_conv3 = self.conv3_1(out_concat)  # [1, 256, 32, 1024]
+        out_conv4 = self.conv4_1(self.conv4(out_conv3))  # [1, 512, 16, 256]
+        out_conv5 = self.conv5_1(self.conv5(out_conv4))  # [1, 1024, 8, 64]
+
+        flow5 = self.predict_flow5(out_conv5)  # [1, 2, 8, 64]
+        flow5_up = self.crop_like(self.upsampled_flow5_to_4(flow5), out_conv4)  # [1, 2, 16, 256]
+        # self.visualize_flow(flow5_up)
+        out_deconv4 = self.crop_like(self.deconv5(out_conv5), out_conv4)  # [1, 512, 16, 256]
+
+        concat4 = torch.cat((out_conv4, out_deconv4, flow5_up), 1)  # [1, 1026, 16, 256]
+
+        flow4 = self.predict_flow4(concat4)  # [1, 2, 32, 1024]
+        flow4_up = self.crop_like(self.upsampled_flow4_to_3(flow4), out_conv3)  # [1, 256, 32, 1024]
+        # self.visualize_flow(flow4_up)
+        out_deconv3 = self.crop_like(self.deconv4(out_conv4), out_conv3)  # [1, 256, 32, 1024]
+
+        concat3 = torch.cat((out_conv3, out_deconv3, flow4_up), 1)  # [1, 514, 32, 1024]
+        flow3 = self.predict_flow3(concat3)  # [1, 2, 32, 1024]
+        pred_flow = self.visualize_flow(flow3)
+
+        # # Create a figure and set up subplots
+        # fig, axes = plt.subplots(3, 1)
         #
-        # std1 = x1.std(dim=(0, 1))
-        # std2 = x2.std(dim=(0, 1))
+        # # Plot the first image in the first subplot
+        # axes[0].imshow(org_flow, cmap='gray')
+        # axes[0].set_title('Original flow')
         #
-        # normal_x1 = x1 - mean1
-        # normal_x2 = x2 - mean2
+        # # Plot the first image in the first subplot
+        # axes[1].imshow(flow_2_gt, cmap='gray')
+        # axes[1].set_title('flow projected to 2')
         #
-        # out = F.conv2d(input=normal_x1, weight=normal_x2[:, :, :, :20])
+        # # Plot the second image in the second subplot
+        # axes[2].imshow(pred_flow, cmap='gray')
+        # axes[2].set_title('Predicted flow')
+        #
+        # # Adjust spacing between subplots
+        # plt.tight_layout()
+        #
+        # # Display the figure
+        # plt.show()
 
-        x1_redir = self.corr_redir(x1)
-        out_correlation = self.correlate(x1, x2)
-        out_concat = torch.cat([x1_redir, out_correlation], dim=1)
+        display_comparison(original_flow=org_flow, flow_projected_2=flow_2_gt, predicted_flow=pred_flow)
 
-        out_conv3 = self.conv3_1(out_concat)
-        out_conv4 = self.conv4_1(self.conv4(out_conv3))
-        # out_conv4_1 = self.conv4_1(out_conv4)
-        out_conv5 = self.conv5_1(self.conv5(out_conv4))
-
-        flow5 = self.predict_flow5(out_conv5)
-        flow5_up = self.crop_like(self.upsampled_flow5_to_4(flow5), out_conv4)
-        self.visualize_flow(flow5_up)
-        out_deconv4 = self.crop_like(self.deconv5(out_conv5), out_conv4)
-
-        concat4 = torch.cat((out_conv4, out_deconv4, flow5_up), 1)
-
-        flow4 = self.predict_flow4(concat4)
-        flow4_up = self.crop_like(self.upsampled_flow4_to_3(flow4), out_conv3)  #
-        self.visualize_flow(flow4_up)
-        out_deconv3 = self.crop_like(self.deconv4(out_conv4), out_conv3)
-
-        concat3 = torch.cat((out_conv3, out_deconv3, flow4_up), 1)
-        flow3 = self.predict_flow3(concat3)
-        self.visualize_flow(flow3)
-
-        return out_correlation
+        return flow3

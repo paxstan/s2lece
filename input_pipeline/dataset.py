@@ -4,6 +4,7 @@ import numpy as np
 from utils.transform_tools import persp_apply
 from utils.data_conversion import project_point_cloud
 from scipy.spatial.transform import Rotation as R
+from scipy.signal import correlate2d
 from PIL import Image
 
 
@@ -150,9 +151,13 @@ class RealPairDataset(LidarBase):
 
         range1[proj_y1, proj_x1] = depth1
         range2[proj_y2, proj_x2] = depth2
+
+        cor = correlate2d(range1, range2)
+        shift_y = proj_y2 - proj_y1
+        shift_x = proj_x2 - proj_x1
         flow = np.zeros((h2, w2, 2))
-        flow[proj_y2, proj_x2, 0] = proj_y1
-        flow[proj_y2, proj_x2, 1] = proj_x1
+        flow[proj_y2, proj_x2, 0] = shift_y
+        flow[proj_y2, proj_x2, 1] = shift_x
 
         org_flow = copy.deepcopy(flow)
 

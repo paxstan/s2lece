@@ -73,11 +73,14 @@ def main(argv):
         for input_data in dataloader:
             img1 = input_data.pop('img1')
             img2 = input_data.pop('img2')
+            flow = input_data.pop('aflow')
             img1 = torch.unsqueeze(torch.tensor(img1), 0)
             img2 = torch.unsqueeze(torch.tensor(img2), 0)
+            flow = torch.unsqueeze(torch.tensor(flow), 0)
+            new_flow = torch.concat((img2, flow), dim=1)
             out1 = cnn_autoencoder(img1)
             out2 = cnn_autoencoder(img2)
-            output = correlation_net(out1, out2)
+            output = correlation_net(out1, out2, flow, new_flow)
             print("data")
 
         # train(cnn_autoencoder, dataloader=loader,

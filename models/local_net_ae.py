@@ -57,10 +57,10 @@ class Autoencoder(nn.Module):
         x_patch = patch_extractor(x)
         # self.view_result(x.clone())
         out_encoder = [self.encoder(patch) for patch in x_patch]
-        compare_images(x_patch[0], out_encoder[0])
+        # compare_images(x_patch[0], out_encoder[0])
         # self.view_result(x.clone().permute(1, 3, 2, 0))
-        out_decoder = [self.decoder(patch) for patch in out_encoder]
-        compare_images(x_patch[0], out_decoder[0])
+        # out_decoder = [self.decoder(patch) for patch in out_encoder]
+        # compare_images(x_patch[0], out_decoder[0])
         # self.view_result(x.clone())
         return out_encoder
 
