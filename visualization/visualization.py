@@ -209,28 +209,14 @@ def flow2rgb(flow_map, max_value):
     return rgb_map.clip(0, 1)
 
 
-def display_comparison(**kwargs):
+def display_flows(**kwargs):
     # Create subplots
     fig, axes = pl.subplots(len(kwargs), 1, sharex=True, sharey=True)
 
-    # Connect event handlers for zooming
-    def on_xlim_changed(ax):
-        for a in axes:
-            if a is not ax:
-                a.set_xlim(ax.get_xlim())
-
-    def on_ylim_changed(ax):
-        for a in axes:
-            if a is not ax:
-                a.set_ylim(ax.get_ylim())
-
     for index, (key, value) in enumerate(kwargs.items()):
-        axes[index].imshow(value, cmap='gray')
+        rgb_flow = flow2rgb(20 * value, max_value=None)
+        img = (rgb_flow * 255).astype(np.uint8).transpose(1, 2, 0)
+        axes[index].imshow(img, cmap='gray')
         axes[index].set_title(key)
-        h, w, _ = value.shape
-        # axes[index].set_xlim([0, w])
-        # axes[index].set_ylim([0, h])
-
-    # fig.canvas.mpl_connect('xlim_changed', on_xlim_changed)
-    # fig.canvas.mpl_connect('ylim_changed', on_ylim_changed)
+    pl.tight_layout()
     pl.show()

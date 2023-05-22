@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from spatial_correlation_sampler import spatial_correlation_sample
-from visualization.visualization import flow_to_color, flow2rgb, display_comparison
+from visualization.visualization import flow2rgb, display_flows
 
 
 class CorrelationNetwork(nn.Module):
@@ -87,11 +87,8 @@ class CorrelationNetwork(nn.Module):
 
     @staticmethod
     def visualize_flow(flow):
-        # flow = flow.detach().squeeze().numpy().transpose(1, 2, 0)
-        # img = flow_to_color(flow)
         rgb_flow = flow2rgb(20 * flow, max_value=None)
         img = (rgb_flow * 255).astype(np.uint8).transpose(1, 2, 0)
-        # plt.imshow(img)
         return img
 
     @staticmethod
@@ -113,38 +110,17 @@ class CorrelationNetwork(nn.Module):
             # regular 4D tensor
             b, ph, pw, h, w = out_corr2.size()
             out_corr2 = out_corr2.view(b, ph * pw, h, w) / input1.size(1)  # [1, 1, 32, 1024]
+            # out_corr = F.conv2d(input1, patch_input2, stride=32, padding=0)
             F.leaky_relu_(out_corr2, 0.1)
             correlation_tensor = torch.concat((correlation_tensor, out_corr2), dim=1)
         return correlation_tensor  # [1, 32, 32, 1024]
 
     def forward(self, x1, x2, og_flow, flow):
-
-        # out_correlation = [self.correlate(x1_patch, y1_patch) for x1_patch in x1 for y1_patch in x2]
-        # out_correlation = []
         flow_gt = self.predict_flow_truth(flow)
-        # fill_value = torch.nanmean(og_flow)
-        # og_flow[og_flow.isnan()] = fill_value
-
-        org_flow = self.visualize_flow(og_flow)
-        flow_2_gt = self.visualize_flow(flow_gt)
-
-        out_correlation = torch.Tensor()
-        x1_redir = torch.Tensor()
-        # for i in range(len(x1)):  # when patch_size=32, takes long time, patch_size=1 [1, 32, 32, 1024]
-        #     sub_correlation = torch.Tensor()
-        #     for j in range(len(x2)):
-        #         sub_correlation = torch.concat((sub_correlation, self.correlate(x1[i], x2[j])), dim=1)
-        #     out_correlation = torch.concat((out_correlation, sub_correlation), dim=-1)
-        #     x1_redir = torch.concat((x1_redir, self.conv_redir(x1[i])), dim=-1)
-
-        # for i in range(len(x1)):
-        #     out_correlation = torch.concat((out_correlation, self.correlate(x1[i], x2[i])), dim=-1)
-        #     x1_redir = torch.concat((x1_redir, self.conv_redir(x1[i])), dim=-1)
-
         out_correlation = self.correlate(x1, x2)
         x1_redir = self.conv_redir(x1)
 
-        out_concat = torch.cat([x1_redir, out_correlation], dim=1)  # [1, 473, 32, 1024]
+        out_concat = torch.cat([x1_redir, out_correlation], dim=1)  # [1, 64, 32, 1024]
 
         out_conv3 = self.conv3_1(out_concat)  # [1, 256, 32, 1024]
         out_conv4 = self.conv4_1(self.conv4(out_conv3))  # [1, 512, 16, 256]
@@ -152,41 +128,17 @@ class CorrelationNetwork(nn.Module):
 
         flow5 = self.predict_flow5(out_conv5)  # [1, 2, 8, 64]
         flow5_up = self.crop_like(self.upsampled_flow5_to_4(flow5), out_conv4)  # [1, 2, 16, 256]
-        # self.visualize_flow(flow5_up)
         out_deconv4 = self.crop_like(self.deconv5(out_conv5), out_conv4)  # [1, 512, 16, 256]
 
         concat4 = torch.cat((out_conv4, out_deconv4, flow5_up), 1)  # [1, 1026, 16, 256]
 
         flow4 = self.predict_flow4(concat4)  # [1, 2, 32, 1024]
         flow4_up = self.crop_like(self.upsampled_flow4_to_3(flow4), out_conv3)  # [1, 256, 32, 1024]
-        # self.visualize_flow(flow4_up)
         out_deconv3 = self.crop_like(self.deconv4(out_conv4), out_conv3)  # [1, 256, 32, 1024]
 
         concat3 = torch.cat((out_conv3, out_deconv3, flow4_up), 1)  # [1, 514, 32, 1024]
-        flow3 = self.predict_flow3(concat3)  # [1, 2, 32, 1024]
-        pred_flow = self.visualize_flow(flow3)
+        pred_flow = self.predict_flow3(concat3)  # [1, 2, 32, 1024]
 
-        # # Create a figure and set up subplots
-        # fig, axes = plt.subplots(3, 1)
-        #
-        # # Plot the first image in the first subplot
-        # axes[0].imshow(org_flow, cmap='gray')
-        # axes[0].set_title('Original flow')
-        #
-        # # Plot the first image in the first subplot
-        # axes[1].imshow(flow_2_gt, cmap='gray')
-        # axes[1].set_title('flow projected to 2')
-        #
-        # # Plot the second image in the second subplot
-        # axes[2].imshow(pred_flow, cmap='gray')
-        # axes[2].set_title('Predicted flow')
-        #
-        # # Adjust spacing between subplots
-        # plt.tight_layout()
-        #
-        # # Display the figure
-        # plt.show()
+        display_flows(original_flow=og_flow, flow_projected_2=flow_gt, predicted_flow=pred_flow)
 
-        display_comparison(original_flow=org_flow, flow_projected_2=flow_2_gt, predicted_flow=pred_flow)
-
-        return flow3
+        return pred_flow
