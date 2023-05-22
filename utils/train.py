@@ -82,7 +82,8 @@ class MyTrainer(Trainer):
         # print(output)
         allvars = dict(inputs, **output)
         loss, details = self.loss_func(**allvars)
-        if torch.is_grad_enabled(): loss.backward()
+        if torch.is_grad_enabled():
+            loss.backward()
         return loss, details
 
 

@@ -2,8 +2,7 @@
 # CC BY-NC-SA 3.0
 # Available only for non-commercial use
 
-import pdb
-from models.reliability_loss import *
+from models.old.reliability_loss import *
 
 
 class MultiLoss(nn.Module):

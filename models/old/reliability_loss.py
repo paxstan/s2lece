@@ -2,11 +2,9 @@
 # CC BY-NC-SA 3.0
 # Available only for non-commercial use
 
-import pdb
 import torch.nn as nn
-import torch.nn.functional as F
 
-from models.ap_loss import APLoss
+from models.old.ap_loss import APLoss
 
 
 class PixelAPLoss(nn.Module):
@@ -30,7 +28,7 @@ class PixelAPLoss(nn.Module):
     def forward(self, descriptors, aflow, **kw):
         # subsample things
         scores, gt, msk, qconf = self.sampler(descriptors, kw.get('reliability'), aflow)
-        print(scores, gt, msk, qconf)
+        # print(scores, gt, msk, qconf)
 
         # compute pixel-wise AP
         n = qconf.numel()
