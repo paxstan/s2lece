@@ -99,34 +99,45 @@ def evaluate(losses, autoencoder, dataloader, flatten=True, vae=False, condition
     losses.append(loss)
 
 
-def train(net, dataloader, test_dataloader, epochs=5, flatten=False, loss_fn=nn.MSELoss(), title=None, config=None):
-    optim = torch.optim.Adam(net.parameters())
+def train(net, dataloader, epochs=5, config=None):
+    param_groups = [{'params': net.bias_parameters(), 'weight_decay': 0},
+                    {'params': net.weight_parameters(), 'weight_decay': 4e-4}]
+    optimizer = torch.optim.Adam(param_groups, 0.9,
+                                 betas=(0.9, 0.999))
+
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 150, 200], gamma=0.5)
 
     train_losses = []
     validation_losses = []
     image_title = ""
 
     for i in range(epochs):
+        scheduler.step()
         for iter, inputs in enumerate(tqdm(dataloader)):
-            inputs = todevice(inputs)
-            img1 = inputs.pop('img')
-            optim.zero_grad()
 
-            output = net(img1)
-            loss = loss_fn(img1, output)
+            inputs = todevice(inputs)
+            img1 = inputs.pop('img1')
+            img2 = inputs.pop('img2')
+            target_flow = inputs.pop('aflow')
+
+            pred_flow = net(img1, img2)
+            loss = torch.norm(target_flow - pred_flow, p=2, dim=1)
+            flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
+            loss = loss[~flow_mask].mean()
+
+            optimizer.zero_grad()
             loss.backward()
-            optim.step()
-            # print(loss.item())
+            optimizer.step()
+            print(loss.item())
 
             train_losses.append(loss.item())
-        if title:
-            image_title = f'{title} - Epoch {i}'
-            print(image_title)
+        # if title:
+        #     image_title = f'{title} - Epoch {i}'
+        #     print(image_title)
         # evaluate(validation_losses, net, test_dataloader, flatten, title=image_title)
 
     # print(f"\n>> Saving model to {config['save_path']}")
     # torch.save({'net': 'ConvolutionAE()', 'state_dict': net.state_dict()}, config["save_path"])
 
     print(f"\n>> Saving model to {config['save_path']}")
-    encoder_net = net.encoder
-    torch.save({'net': 'ConvolutionAE()', 'state_dict': encoder_net.state_dict()}, config["save_path"])
+    torch.save({'net': 'FlowModel()', 'state_dict': net.state_dict()}, config["save_path"])
