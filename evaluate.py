@@ -13,8 +13,8 @@ def evaluate(net, img1, img2, flow):
     target_flow = torch.unsqueeze(torch.tensor(flow), 0)
     pred_flow = net(img1, img2)
     epe_loss = torch.norm(target_flow-pred_flow, p=2, dim=1)
-    flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
-    epe_loss = epe_loss[~flow_mask]
+    # flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
+    # epe_loss = epe_loss[~flow_mask]
     print(f"Average loss: {epe_loss.mean()}")
 
     pred_flow_img = flow_to_color(pred_flow.detach().squeeze().numpy().transpose(1, 2, 0))

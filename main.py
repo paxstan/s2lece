@@ -21,7 +21,7 @@ RANDOM_RESCALE = RandomScale(64, 64, can_upscale=True)
 RANDOM_CROP = RandomCrop((64, 180))
 
 FLAGS = flags.FLAGS
-flags.DEFINE_boolean('train', False, 'Specify whether to train or evaluate a model.')
+flags.DEFINE_boolean('train', True, 'Specify whether to train or evaluate a model.')
 flags.DEFINE_boolean('visualize', False, 'Specify whether to train or evaluate a model.')
 flags.DEFINE_string('runId', "", 'Specify path to the run directory.')
 
@@ -67,19 +67,14 @@ def main(argv):
         # feature_net = FeatureExtractor().to(device)
         # correlation_net = CorrelationNetwork().to(device)
 
-        # for input_data in dataloader:
-        #     img1 = input_data.pop('img1')
-        #     img2 = input_data.pop('img2')
-        #     flow = input_data.pop('aflow')
-        #     img1 = torch.unsqueeze(torch.tensor(img1), 0)
-        #     img2 = torch.unsqueeze(torch.tensor(img2), 0)
-        #     target_flow = torch.unsqueeze(torch.tensor(flow), 0)
-        #     # f_img1 = feature_net(img1)
-        #     # f_img2 = feature_net(img2)
-        #     # pred_flow = correlation_net(f_img1, f_img2)
-        #
-        # pred_flow = net(img1, img2)
-        #
+        for input_data in dataloader:
+            img1 = input_data.pop('img1')
+            img2 = input_data.pop('img2')
+            flow = input_data.pop('aflow')
+            img1 = torch.unsqueeze(torch.tensor(img1), 0)
+            img2 = torch.unsqueeze(torch.tensor(img2), 0)
+            target_flow = torch.unsqueeze(torch.tensor(flow), 0)
+            pred_flow = net(img1, img2)
         #     epe_loss = torch.norm(target_flow-pred_flow, p=2, dim=1)
         #     flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
         #     epe_loss = epe_loss[~flow_mask]
@@ -89,7 +84,7 @@ def main(argv):
         #     # output = correlation_net(out1, out2, flow, new_flow)
         #     print(f"loss :{epe_loss}")
 
-        train(net, dataloader=loader, epochs=5, config=config)
+        train(net, dataloader=loader, epochs=10, config=config)
 
     else:
         i = random.randint(0, real_pair_dt.npairs)

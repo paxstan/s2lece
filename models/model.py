@@ -126,7 +126,7 @@ def conv_layer(name, in_channel, out_channel, kernel_size=(3, 3), stride=(1, 1),
     seq_model.add_module(f"bn_{name}", nn.BatchNorm2d(out_channel))
     seq_model.add_module(f"activ_{name}", nn.LeakyReLU(0.1, inplace=True))
     if max_pooling:
-        seq_model.add_module(f"max_pool_{name}", nn.MaxPool2d(kernel_size=2, stride=2))
+        seq_model.add_module(f"max_pool_{name}", nn.MaxPool2d(kernel_size=(1, 2), stride=(1, 2)))
     return seq_model
 
 
@@ -135,9 +135,9 @@ def de_conv_layer(name, in_channel, out_channel, kernel_size=(3, 3), max_pooled=
     if max_pooled:
         seq_model.add_module(f"de_conv_{name}",
                              nn.ConvTranspose2d(in_channel, out_channel,
-                                                kernel_size=kernel_size, stride=2,
+                                                kernel_size=kernel_size, stride=(1, 2),
                                                 padding=((kernel_size[0] - 1) // 2, (kernel_size[1] - 1) // 2),
-                                                output_padding=(1, 1),
+                                                output_padding=(0, 1),
                                                 bias=False))
     else:
         seq_model.add_module(f"de_conv_{name}",
