@@ -4,11 +4,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from spatial_correlation_sampler import spatial_correlation_sample
-from visualization.visualization import flow2rgb, display_flows
+from visualization.visualization import flow2rgb, display_flows, flow_to_color
 
 
 class CorrelationNetwork(nn.Module):
-    def __init__(self, patch_size=1):
+    def __init__(self):
         super(CorrelationNetwork, self).__init__()
         self.conv_redir = nn.Sequential(
             nn.Conv2d(256, 32, kernel_size=1, stride=1, padding=0),
@@ -17,7 +17,7 @@ class CorrelationNetwork(nn.Module):
         )
 
         self.conv3_1 = nn.Sequential(
-            nn.Conv2d(64, 256, kernel_size=(1, 3), stride=(1, 1), padding=(0, 1)),
+            nn.Conv2d(1056, 256, kernel_size=(1, 3), stride=(1, 1), padding=(0, 1)),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.1, inplace=True)
         )  # [1, 256. 32, 1024]
@@ -71,8 +71,8 @@ class CorrelationNetwork(nn.Module):
         self.predict_flow3 = nn.Conv2d(514, 2, kernel_size=(1, 3),
                                        stride=(1, 1), padding=(0, 1))
 
-        self.predict_flow_truth = nn.Conv2d(3, 2, kernel_size=(1, 1),
-                                            stride=(1, 1), padding=(0, 1))
+        # self.predict_flow_truth = nn.Conv2d(3, 2, kernel_size=(1, 1),
+        #                                     stride=(1, 1), padding=(0, 1))
 
     @staticmethod
     def predict_flow(in_planes):
@@ -93,30 +93,42 @@ class CorrelationNetwork(nn.Module):
 
     @staticmethod
     def correlate(input1, input2, patch_size=32, stride=32):
-        correlation_tensor = torch.Tensor()
-        _, c, h, w = input1.size()
-        for i in range(0, w - patch_size + 1, stride):
-            patch_input2 = input2[:, :, :, i: i + patch_size]
-            patch_input2 = patch_input2.repeat(1, 1, 1, 32)
-            # each pixel in input one against all pixel in input2 -> produce a channel
-            out_corr2 = spatial_correlation_sample(input1,
-                                                   patch_input2,
-                                                   kernel_size=1,
-                                                   patch_size=1,
-                                                   stride=1,
-                                                   padding=0,
-                                                   dilation_patch=2)
-            # collate dimensions 1 and 2 in order to be treated as a
-            # regular 4D tensor
-            b, ph, pw, h, w = out_corr2.size()
-            out_corr2 = out_corr2.view(b, ph * pw, h, w) / input1.size(1)  # [1, 1, 32, 1024]
-            # out_corr = F.conv2d(input1, patch_input2, stride=32, padding=0)
-            F.leaky_relu_(out_corr2, 0.1)
-            correlation_tensor = torch.concat((correlation_tensor, out_corr2), dim=1)
-        return correlation_tensor  # [1, 32, 32, 1024]
+        out_corr = spatial_correlation_sample(input1,
+                                              input2,
+                                              kernel_size=1,
+                                              patch_size=patch_size,
+                                              stride=1,
+                                              padding=0,
+                                              dilation_patch=32)
+        # collate dimensions 1 and 2 in order to be treated as a
+        # regular 4D tensor
+        b, ph, pw, h, w = out_corr.size()
+        out_corr = out_corr.view(b, ph * pw, h, w) / input1.size(1)
+        return F.leaky_relu_(out_corr, 0.1)
+        # correlation_tensor = torch.Tensor()
+        # _, c, h, w = input1.size()
+        # for i in range(0, w - patch_size + 1, stride):
+        #     patch_input2 = input2[:, :, :, i: i + patch_size]
+        #     patch_input2 = patch_input2.repeat(1, 1, 1, 32)
+        #     # each pixel in input one against all pixel in input2 -> produce a channel
+        #     out_corr2 = spatial_correlation_sample(input1,
+        #                                            patch_input2,
+        #                                            kernel_size=1,
+        #                                            patch_size=32,
+        #                                            stride=1,
+        #                                            padding=0,
+        #                                            dilation_patch=2)
+        #     # collate dimensions 1 and 2 in order to be treated as a
+        #     # regular 4D tensor
+        #     b, ph, pw, h, w = out_corr2.size()
+        #     out_corr2 = out_corr2.view(b, ph * pw, h, w) / input1.size(1)  # [1, 1, 32, 1024]
+        #     # out_corr = F.conv2d(input1, patch_input2, stride=32, padding=0)
+        #     F.leaky_relu_(out_corr2, 0.1)
+        #     correlation_tensor = torch.concat((correlation_tensor, out_corr2), dim=1)
+        # return correlation_tensor  # [1, 32, 32, 1024]
 
-    def forward(self, x1, x2, og_flow, flow):
-        flow_gt = self.predict_flow_truth(flow)
+    def forward(self, x1, x2):
+        # flow_gt = self.predict_flow_truth(flow)
         out_correlation = self.correlate(x1, x2)
         x1_redir = self.conv_redir(x1)
 
@@ -139,6 +151,7 @@ class CorrelationNetwork(nn.Module):
         concat3 = torch.cat((out_conv3, out_deconv3, flow4_up), 1)  # [1, 514, 32, 1024]
         pred_flow = self.predict_flow3(concat3)  # [1, 2, 32, 1024]
 
-        display_flows(original_flow=og_flow, flow_projected_2=flow_gt, predicted_flow=pred_flow)
+        # img = flow_to_color(og_flow.detach().squeeze().numpy().transpose(1, 2, 0))
+        # display_flows(original_flow=og_flow, flow_projected_2=flow_gt, predicted_flow=pred_flow)
 
         return pred_flow
