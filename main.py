@@ -55,8 +55,6 @@ def main(argv):
     net = FlowModel(device)
 
     if FLAGS.train:
-        # device = torch.device("cpu")
-
         # training
         dataloader = PairLoader(dataset=real_pair_dt, scale=RANDOM_SCALE,
                                 crop=RANDOM_CROP,
@@ -80,7 +78,7 @@ def main(argv):
         #     # f_img2 = feature_net(img2)
         #     # pred_flow = correlation_net(f_img1, f_img2)
         #
-        #     pred_flow = net(img1, img2)
+        # pred_flow = net(img1, img2)
         #
         #     epe_loss = torch.norm(target_flow-pred_flow, p=2, dim=1)
         #     flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)

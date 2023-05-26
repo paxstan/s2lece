@@ -6,7 +6,7 @@ gpu:
 #dataset
 ros_bag_path: '../../data/hilti/rosbag/exp04_imu/exp04_construction_upper_level.bag'
 ground_truth_path : '../../data/hilti/rosbag/exp04_imu/exp_04_construction_upper_level_imu.txt'
-data_dir: 'dataset/data_new_10'
+data_dir: 'dataset/data_new_20'
 field_name: 'x, y, intensity'
 
 #lidarparameter
