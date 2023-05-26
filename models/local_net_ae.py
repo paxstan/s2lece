@@ -130,32 +130,3 @@ class ConvolutionAE(Autoencoder):
             # nn.Tanh()
         )
 
-
-class FeatureExtractor(nn.Module):
-    def __init__(self):
-        super(FeatureExtractor, self).__init__()
-        self.layer1 = self.conv_layer(1, 16)
-        self.layer2 = self.conv_layer(16, 32)
-        self.layer3 = self.conv_layer(32, 64)
-        self.layer4 = self.conv_layer(64, 128)
-        self.layer5 = self.conv_layer(128, 256)
-
-    @staticmethod
-    def conv_layer(in_channel, out_channel, kernel_size=3, stride=1):
-        return nn.Sequential(
-            nn.Conv2d(in_channel, out_channel, kernel_size=kernel_size, stride=stride, padding=(kernel_size - 1) // 2),
-            nn.BatchNorm2d(out_channel),
-            nn.LeakyReLU(0.1, inplace=True)
-        )
-
-    def forward(self, x, device):
-        x_patch = patch_extractor(x)
-        out_encoded = torch.Tensor().to(device)
-        for patch in x_patch:
-            patch = self.layer1(patch)
-            patch = self.layer2(patch)
-            patch = self.layer3(patch)
-            patch = self.layer4(patch)
-            patch = self.layer5(patch)
-            out_encoded = torch.concat((out_encoded, patch), dim=-1)
-        return out_encoded

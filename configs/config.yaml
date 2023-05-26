@@ -1,5 +1,5 @@
 #general
-save_path: 'runs/run_encoder.pt'
+save_path: 'runs/flow_mode1_e5.pt'
 gpu:
   - -1
 

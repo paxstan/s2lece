@@ -1,4 +1,5 @@
 import numpy as np
+import random
 from absl import app, flags
 from input_pipeline.dataset_creator import random_image_loader, DatasetCreator
 from input_pipeline.dataset import RealPairDataset, SyntheticPairDataset, SingleDataset
@@ -61,11 +62,11 @@ def main(argv):
                                 crop=RANDOM_CROP,
                                 distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
 
-        loader = threaded_loader(dataloader, batch_size=5, iscuda=iscuda, threads=1)
+        loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)
 
         print("\n>> Creating networks..")
 
-        # cnn_autoencoder = ConvolutionAE().to(device)
+        # feature_net = FeatureExtractor().to(device)
         # correlation_net = CorrelationNetwork().to(device)
 
         # for input_data in dataloader:
@@ -75,7 +76,11 @@ def main(argv):
         #     img1 = torch.unsqueeze(torch.tensor(img1), 0)
         #     img2 = torch.unsqueeze(torch.tensor(img2), 0)
         #     target_flow = torch.unsqueeze(torch.tensor(flow), 0)
-        #     pred_flow = model(img1, img2)
+        #     # f_img1 = feature_net(img1)
+        #     # f_img2 = feature_net(img2)
+        #     # pred_flow = correlation_net(f_img1, f_img2)
+        #
+        #     pred_flow = net(img1, img2)
         #
         #     epe_loss = torch.norm(target_flow-pred_flow, p=2, dim=1)
         #     flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
@@ -84,12 +89,12 @@ def main(argv):
         #     # out1 = cnn_autoencoder(img1)
         #     # out2 = cnn_autoencoder(img2)
         #     # output = correlation_net(out1, out2, flow, new_flow)
-        #     print("data")
+        #     print(f"loss :{epe_loss}")
 
         train(net, dataloader=loader, epochs=5, config=config)
 
     else:
-        i = 30
+        i = random.randint(0, real_pair_dt.npairs)
         img_a, img_b, metadata = real_pair_dt.get_pair(i)
         aflow = np.float32(metadata['aflow'])
         net_weights = torch.load(config['save_path'])
