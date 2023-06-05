@@ -8,9 +8,9 @@ from input_pipeline.preprocessing import RandomScale, RandomTilting, PixelNoise,
 import yaml
 from visualization.visualization import show_flow
 from utils import common
-from models.model import FlowModel
+from models.model import FlowModel, AutoEncoder
 import torch
-from train import train
+from train import TrainAutoEncoder, TrainFlowModel
 from evaluate import evaluate
 
 RANDOM_SCALE = RandomScale(min_size=80, max_size=128, can_upscale=True)
@@ -21,84 +21,74 @@ RANDOM_RESCALE = RandomScale(64, 64, can_upscale=True)
 RANDOM_CROP = RandomCrop((64, 180))
 
 FLAGS = flags.FLAGS
-flags.DEFINE_boolean('train', False, 'Specify whether to train or evaluate a model.')
+flags.DEFINE_boolean('train', True, 'Specify whether to train or evaluate a model.')
 flags.DEFINE_boolean('visualize', False, 'Specify whether to train or evaluate a model.')
 flags.DEFINE_string('runId', "", 'Specify path to the run directory.')
+config = yaml.load(open("configs/config.yaml", "r"), Loader=yaml.FullLoader)
+iscuda = common.torch_set_gpu(config["gpu"])
+device = torch.device("cuda" if iscuda else "cpu")
 
 
 def main(argv):
-    config = yaml.load(open("configs/config.yaml", "r"), Loader=yaml.FullLoader)
-
     # run_paths = utils_params.gen_run_folder(FLAGS.runId)
     # set loggers
     # utils_misc.set_loggers(run_paths['path_logs_train'], logging.INFO)
 
     # utils_params.save_config(run_paths['path_gin'], gin.config_str())
-    iscuda = common.torch_set_gpu(config["gpu"])
-    device = torch.device("cuda" if iscuda else "cpu")
     common.mkdir_for(config["save_path"])
 
     # extract and create dataset from ROS Bag
-    create_dataset = DatasetCreator(config)
+    create_dataset = DatasetCreator(config, generate_ground_truth=config["gen_gt"])
     create_dataset()
 
-    # dataset object for single lidar range images
-    # single_dt = SingleDataset(root=config["data_dir"])
-    # single_dataloader = SingleLoader(dataset=single_dt, scale=RANDOM_SCALE,
-    #                                  crop=RANDOM_CROP, distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
-
-    # dataset object for real pair lidar data
-    real_pair_dt = RealPairDataset(root=config["data_dir"])
     # synth_pair_dt = SyntheticPairDataset(config["data_dir"], scale=RANDOM_SCALE,
     #                                   distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
 
-    net = FlowModel(device)
+    print("\n>> Creating networks..")
+    if config["train_fe"]:
+        # dataset object for single lidar range images
+        train_single_dt = SingleDataset(root=config["train_data_dir"])
+        test_single_dt = SingleDataset(root=config["test_data_dir"])
 
-    if FLAGS.train:
-        # training
-        dataloader = PairLoader(dataset=real_pair_dt, scale=RANDOM_SCALE,
+        dataloader = SingleLoader(dataset=train_single_dt, scale=RANDOM_SCALE,
+                                  crop=RANDOM_CROP, distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
+
+        test_dataloader = SingleLoader(dataset=test_single_dt, scale=RANDOM_SCALE,
+                                       crop=RANDOM_CROP, distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
+
+        net = AutoEncoder().to(device)
+        if FLAGS.train:
+            loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)
+            test_loader = threaded_loader(test_dataloader, batch_size=4, iscuda=iscuda, threads=1)
+            train = TrainAutoEncoder(net=net, dataloader=loader, test_dataloader=test_loader,
+                                     epochs=5, config=config, title="CAE", is_cuda=iscuda)
+            train()
+
+        else:
+            evaluation(net, None)
+    else:
+        # dataset object for real pair lidar data
+        train_r_pair_dt = RealPairDataset(root=config["train_data_dir"])
+        test_r_pair_dt = RealPairDataset(root=config["test_data_dir"])
+
+        dataloader = PairLoader(dataset=train_r_pair_dt, scale=RANDOM_SCALE,
                                 crop=RANDOM_CROP,
                                 distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
+        test_dataloader = PairLoader(dataset=test_r_pair_dt, scale=RANDOM_SCALE,
+                                     crop=RANDOM_CROP,
+                                     distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
 
-        loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)
+        net = FlowModel(config, device)
 
-        print("\n>> Creating networks..")
+        if FLAGS.train:
+            loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)
+            test_loader = threaded_loader(test_dataloader, batch_size=4, iscuda=iscuda, threads=1)
+            train = TrainFlowModel(net=net, dataloader=loader, test_dataloader=test_loader,
+                                   epochs=5, config=config, is_cuda=iscuda)
+            train()
 
-        # feature_net = FeatureExtractor().to(device)
-        # correlation_net = CorrelationNetwork().to(device)
-
-        # for input_data in dataloader:
-        #     img1 = input_data.pop('img1')
-        #     img2 = input_data.pop('img2')
-        #     flow = input_data.pop('aflow')
-        #     img1 = torch.unsqueeze(torch.tensor(img1), 0)
-        #     img2 = torch.unsqueeze(torch.tensor(img2), 0)
-        #     target_flow = torch.unsqueeze(torch.tensor(flow), 0)
-        #     # f_img1 = feature_net(img1)
-        #     # f_img2 = feature_net(img2)
-        #     # pred_flow = correlation_net(f_img1, f_img2)
-        #
-        # pred_flow = net(img1, img2)
-        #
-        #     epe_loss = torch.norm(target_flow-pred_flow, p=2, dim=1)
-        #     flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
-        #     epe_loss = epe_loss[~flow_mask]
-        #     # new_flow = torch.concat((img2, flow), dim=1)
-        #     # out1 = cnn_autoencoder(img1)
-        #     # out2 = cnn_autoencoder(img2)
-        #     # output = correlation_net(out1, out2, flow, new_flow)
-        #     print(f"loss :{epe_loss}")
-
-        train(net, dataloader=loader, epochs=5, config=config)
-
-    else:
-        i = random.randint(0, real_pair_dt.npairs)
-        img_a, img_b, metadata = real_pair_dt.get_pair(i)
-        aflow = np.float32(metadata['aflow'])
-        net_weights = torch.load(config['save_path'])
-        net.load_state_dict(net_weights["state_dict"])
-        net.eval()
-        evaluate(net, img_a, img_b, aflow)
+        else:
+            evaluation(net, test_r_pair_dt)
 
     if FLAGS.visualize:
         img, mask_array = random_image_loader(config["data_dir"])
@@ -111,6 +101,22 @@ def main(argv):
         show_flow(img0=np.transpose(result['img1']), img1=np.transpose(result['img2']),
                   flow=np.transpose(result['aflow']), mask=np.transpose(result['mask']))
         print("done")
+
+
+def train_fn(train, dataloader, test_dataloader):
+    # training
+    loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)
+    test_loader = threaded_loader(test_dataloader, batch_size=4, iscuda=iscuda, threads=1)
+
+
+def evaluation(net, dataset):
+    i = random.randint(0, dataset.npairs)
+    img_a, img_b, metadata = dataset.get_pair(i)
+    aflow = np.float32(metadata['aflow'])
+    net_weights = torch.load(config['save_path'])
+    net.load_state_dict(net_weights["state_dict"])
+    net.eval()
+    evaluate(net, img_a, img_b, aflow)
 
 
 if __name__ == '__main__':

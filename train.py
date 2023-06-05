@@ -1,143 +1,231 @@
-import os.path
-
 import torch
 import torch.nn as nn
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-import numpy as np
-from models.local_net_ae import ConvolutionAE
-
-iscuda = torch.cuda.is_available()
-device = torch.device("cuda" if iscuda else "cpu")
+import wandb
+import torch.nn.functional as F
 
 
-def todevice(x):
-    if isinstance(x, dict):
-        return {k: todevice(v) for k, v in x.items()}
-    if isinstance(x, (tuple, list)):
-        return [todevice(v) for v in x]
-
-    if iscuda:
-        return x.contiguous().cuda(non_blocking=True)
-    else:
-        return x.cpu()
+# iscuda = False
+# device = torch.device("cuda" if iscuda else "cpu")
 
 
-def calculate_nparameters(model):
-    def times(shape):
-        parameters = 1
-        for layer in list(shape):
-            parameters *= layer
-        return parameters
+# def calculate_nparameters(model):
+#     def times(shape):
+#         parameters = 1
+#         for layer in list(shape):
+#             parameters *= layer
+#         return parameters
+#
+#     layer_params = [times(x.size()) for x in list(model.parameters())]
+#
+#     return sum(layer_params)
 
-    layer_params = [times(x.size()) for x in list(model.parameters())]
 
-    return sum(layer_params)
-
-
-def show_visual_progress(model, test_dataloader, rows=5, flatten=False, vae=False, conditional=False, title=None):
+def show_visual_progress(org_img, pred_img, title=None):
     if title:
         plt.title(title)
 
-    iter(test_dataloader)
-
-    image_org = []
-    image_rows = []
-
-    for idx, batch in enumerate(test_dataloader):
-        if rows == idx:
-            break
-
-        batch = todevice(batch)
-        img = batch.pop('img')
-
-        images = model(img).detach().cpu().numpy().reshape(img.size(0), 32, 1024)
-        org_im = img.detach().cpu().numpy().reshape(img.size(0), 32, 1024)
-
-        image_idxs = [x for x in range(2)]
-        org_images = np.concatenate([images[x].reshape(32, 1024) for x in image_idxs], 1)
-        combined_images = np.concatenate([org_im[x].reshape(32, 1024) for x in image_idxs], 1)
-        image_org.append(org_images)
-        image_rows.append(combined_images)
+    org_img = org_img.detach().cpu().numpy()[0, 0, :, :].reshape(32, 1024)
+    pred_img = pred_img.detach().cpu().numpy()[0, 0, :, :].reshape(32, 1024)
 
     fig, (ax1, ax2) = plt.subplots(2)
-    ax1.imshow(np.concatenate(image_org))
-    ax2.imshow(np.concatenate(image_rows))
-    # plt.imshow(np.concatenate(image_rows))
+    ax1.imshow(org_img)
+    ax2.imshow(pred_img)
 
     if title:
         title = title.replace(" ", "_")
-        plt.savefig('runs/' + title)
-    # plt.show()
+        plt.savefig('runs/progress/' + title)
 
 
-def calculate_loss(model, dataloader, loss_fn=nn.MSELoss()):
-    losses = []
-    for batch in dataloader:
-        batch = todevice(batch)
-        img = batch.pop('img')
-
-        loss = loss_fn(img, model(img))
-
-        losses.append(loss)
-
-    return (sum(losses) / len(losses)).item()  # calculate mean
+def train(train_fe, net, dataloader, test_dataloader, epochs=5, config=None, title=None, is_cuda=False):
+    if is_cuda:
+        device = torch.device("cuda")
+    device = torch.device("cuda" if is_cuda else "cpu")
+    # start a new wandb run to track this script
 
 
-def evaluate(losses, autoencoder, dataloader, flatten=True, vae=False, conditional=False, title=""):
-    #     display.clear_output(wait=True)
-    if vae and conditional:
-        model = lambda x, y: autoencoder(x, y)[0]
-    elif vae:
-        model = lambda x: autoencoder(x)[0]
-    else:
-        model = autoencoder
+class Train:
+    def __init__(self, wandb_config, is_cuda=False):
+        self.is_cuda = is_cuda
+        self.wandb_config = wandb_config
+        self.train_loss = 0
+        self.val_loss = 0
 
-    loss = calculate_loss(model, dataloader)
-    print(loss)
-    show_visual_progress(model, dataloader, flatten=flatten, vae=vae, conditional=conditional, title=title)
-    losses.append(loss)
+    def __call__(self):
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project="s2lece",
+
+            # track hyperparameters and run metadata
+            config=self.wandb_config
+        )
+
+        self.train()
+        wandb.finish()
+
+    def train(self):
+        raise NotImplementedError("train() must be implemented in the child class")
+
+    def todevice(self, x):
+        if isinstance(x, dict):
+            return {k: self.todevice(v) for k, v in x.items()}
+        if isinstance(x, (tuple, list)):
+            return [self.todevice(v) for v in x]
+
+        if self.is_cuda:
+            return x.contiguous().cuda(non_blocking=True)
+        else:
+            return x.cpu()
 
 
-def train(net, dataloader, epochs=5, config=None):
-    param_groups = [{'params': net.bias_parameters(), 'weight_decay': 0},
-                    {'params': net.weight_parameters(), 'weight_decay': 4e-4}]
-    optimizer = torch.optim.Adam(param_groups, 0.9,
-                                 betas=(0.9, 0.999))
+class TrainAutoEncoder(Train):
+    def __init__(self, net, dataloader, test_dataloader, epochs=5, config=None, title=None, is_cuda=False):
+        self.net = net
+        self.dataloader = dataloader
+        self.test_dataloader = test_dataloader
+        self.epochs = epochs
+        self.config = config
+        self.title = title
+        self.learning_rate = 0.05
+        wandb_config = {
+            "learning_rate": self.learning_rate,
+            "architecture": "CNN-Autoencoder",
+            "dataset": "Hilti exp04",
+            "epochs": self.epochs,
+        }
+        super().__init__(is_cuda=is_cuda, wandb_config=wandb_config)
 
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[100, 150, 200], gamma=0.5)
+    def train(self):
+        self.train_autoencoder()
+        print(f"\n>> Saving model to {self.config['fe_save_path']}")
+        torch.save({'net': 'FeatureExtractorNet()', 'state_dict': self.net.encoder.state_dict()},
+                   self.config["fe_save_path"])
 
-    train_losses = []
-    validation_losses = []
-    image_title = ""
+    def loss_fn(self, recon_x, x, mu, logvar):
+        # Reconstruction loss
+        recon_loss = F.mse_loss(recon_x, x, reduction='mean')
+        if self.net.vae:
+            # Kullback-Leibler Divergence loss
+            kld_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
-    for i in range(epochs):
-        scheduler.step()
-        for iter, inputs in enumerate(tqdm(dataloader)):
+            # Total loss
+            recon_loss = recon_loss + kld_loss
+        return recon_loss
 
-            inputs = todevice(inputs)
+    def train_autoencoder(self):
+        optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate)
+        train_losses = []
+        image_title = ""
+
+        for i in range(self.epochs):
+            print(f"epoch: {i}")
+            for iter, inputs in enumerate(tqdm(self.dataloader)):
+                inputs = self.todevice(inputs)
+                img = inputs.pop('img')
+
+                optimizer.zero_grad()
+                pred, mu, logvar = self.net(img)
+                loss = self.loss_fn(pred, img, mu, logvar)
+                loss.backward()
+                optimizer.step()
+                train_losses.append(loss.detach().item())
+                del loss, pred
+                torch.cuda.empty_cache()
+            if self.title:
+                image_title = f'{self.title} - Epoch {i}'
+            self.train_loss = (sum(train_losses) / len(train_losses))
+            self.evaluate_autoencoder(title=image_title)
+            print(f"train loss: {self.train_loss}, val loss: {self.val_loss}")
+            wandb.log({"train loss": self.train_loss, "val loss": self.val_loss})
+
+    def evaluate_autoencoder(self, title, progress_view=True):
+        losses = []
+        for idx, batch in enumerate(self.test_dataloader):
+            batch = self.todevice(batch)
+            img = batch.pop('img')
+            with torch.no_grad():
+                pred, mu, logvar = self.net(img)
+                if progress_view:
+                    show_visual_progress(img, pred, title)
+                    progress_view = False
+                loss = self.loss_fn(pred, img, mu, logvar)
+                losses.append(loss.detach().item())
+                del loss, pred
+                torch.cuda.empty_cache()
+        self.val_loss = sum(losses) / len(losses)
+
+
+class TrainFlowModel(Train):
+    def __init__(self, net, dataloader, test_dataloader, epochs=5, config=None, is_cuda=False):
+        self.net = net
+        self.dataloader = dataloader
+        self.test_dataloader = test_dataloader
+        self.epochs = epochs
+        self.config = config
+        wandb_config = {
+            "learning_rate": 1e-4,
+            "architecture": "FlowModel",
+            "dataset": "Hilti exp04",
+            "epochs": self.epochs,
+        }
+        self.param_groups = [{'params': self.net.bias_parameters(), 'weight_decay': 0},
+                             {'params': self.net.weight_parameters(), 'weight_decay': 4e-4}]
+        # self.optimizer = torch.optim.Adam(self.param_groups, 0.9,
+        #                                   betas=(0.9, 0.999))
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-4)
+
+        # scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=[100, 150, 200], gamma=0.5)
+        super().__init__(is_cuda=is_cuda, wandb_config=wandb_config)
+
+    def train(self):
+        self.train_flownet()
+        print(f"\n>> Saving model to {self.config['save_path']}")
+        torch.save({'net': 'FlowModel()', 'state_dict': self.net.state_dict()}, self.config["save_path"])
+
+    @staticmethod
+    def loss_fn(pred_flow, gt_flow):
+        loss = torch.norm(pred_flow - gt_flow, p=2, dim=1)
+        flow_mask = (gt_flow[:, 0] == 0) & (gt_flow[:, 1] == 0)
+        loss = loss[~flow_mask].mean()
+        return loss
+
+    def train_flownet(self):
+        train_losses = []
+
+        for i in range(self.epochs):
+            for _, inputs in enumerate(tqdm(self.dataloader)):
+                inputs = self.todevice(inputs)
+                img1 = inputs.pop('img1')
+                img2 = inputs.pop('img2')
+                target_flow = inputs.pop('aflow')
+
+                pred_flow = self.net(img1, img2)
+                loss = self.loss_fn(pred_flow, target_flow)
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+                train_losses.append(loss.detach().item())
+                del loss
+                torch.cuda.empty_cache()
+            self.train_loss = (sum(train_losses) / len(train_losses))
+            self.evaluate_flow_model()
+            print(f"train loss: {self.train_loss}, val loss: {self.val_loss}")
+            wandb.log({"train loss": self.train_loss, "val loss": self.val_loss})
+            # scheduler.step()
+
+    def evaluate_flow_model(self):
+        losses = []
+        for idx, inputs in enumerate(self.test_dataloader):
+            inputs = self.todevice(inputs)
             img1 = inputs.pop('img1')
             img2 = inputs.pop('img2')
             target_flow = inputs.pop('aflow')
 
-            pred_flow = net(img1, img2)
-            loss = torch.norm(target_flow - pred_flow, p=2, dim=1)
-            flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
-            loss = loss[~flow_mask].mean()
+            with torch.no_grad():
+                pred_flow = self.net(img1, img2)
+                loss = self.loss_fn(pred_flow, target_flow)
+                losses.append(loss.detach().item())
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            print(loss.item())
-
-            train_losses.append(loss.item())
-        # if title:
-        #     image_title = f'{title} - Epoch {i}'
-        #     print(image_title)
-        # evaluate(validation_losses, net, test_dataloader, flatten, title=image_title)
-
-    # print(f"\n>> Saving model to {config['save_path']}")
-    # torch.save({'net': 'ConvolutionAE()', 'state_dict': net.state_dict()}, config["save_path"])
-
-    print(f"\n>> Saving model to {config['save_path']}")
-    torch.save({'net': 'FlowModel()', 'state_dict': net.state_dict()}, config["save_path"])
+        self.val_loss = (sum(losses) / len(losses))  # calculate mean

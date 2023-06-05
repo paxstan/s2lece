@@ -119,8 +119,10 @@ class RealPairDataset(LidarBase):
         flow[~mask, :] = 0
 
         # crop image
-        img2 = Image.fromarray(img2.reshape(h1, w1))
-        img1 = Image.fromarray(img1.reshape(h1, w1))
+        # img2 = Image.fromarray(img2.reshape(h1, w1))
+        # img1 = Image.fromarray(img1.reshape(h1, w1))
+        img1 = img1.reshape(h1, w1)
+        img2 = img2.reshape(h1, w1)
 
         meta = {'aflow': flow.transpose((2, 0, 1)), 'mask': mask}
         return img1, img2, meta
@@ -197,7 +199,7 @@ class SingleDataset(LidarBase):
     def get_count(self):
         abspath = os.path.abspath(self.root)
         listdir = os.listdir(abspath)
-        return sum([os.path.isdir(os.path.join(abspath + "/" + dr)) for dr in listdir])
+        return sum([os.path.isdir(os.path.join(abspath + "/" + dr)) for dr in listdir if dr != "correspondence"])
 
     def __len__(self):
         return self.npairs
@@ -209,7 +211,7 @@ class SingleDataset(LidarBase):
         h1, w1 = img.shape
         img = img.reshape(-1)
         img[np.invert(mask)] = 0
-        img = Image.fromarray(img.reshape(h1, w1))
+        img = img.reshape(h1, w1)
 
         return img
 

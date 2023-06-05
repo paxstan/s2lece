@@ -1,13 +1,23 @@
 #general
-save_path: 'runs/flow_mode1_e5.pt'
+train_fe: False
+fe_save_path: 'runs/fe_cnn_mode1_e5.pt'
+save_path: 'runs/model_test.pt'
 gpu:
-  - -1
+  - 0
 
 #dataset
-ros_bag_path: '../../data/hilti/rosbag/exp04_imu/exp04_construction_upper_level.bag'
-ground_truth_path : '../../data/hilti/rosbag/exp04_imu/exp_04_construction_upper_level_imu.txt'
-data_dir: 'dataset/data_new_20'
+#ros_bag_path: '../../data/hilti/rosbag/exp05_imu/exp05_construction_upper_level_2.bag'
+ros_bag_path: '../../data/hilti/rosbag/exp06_imu/exp06_construction_upper_level_3.bag'
+ground_truth_path : '../../data/hilti/rosbag/exp05_imu/exp_05_construction_upper_level_2_imu.txt'
+data_dir: 'dataset/data'
+# ae dataset
+# train_data_dir: 'dataset/data/ae_data'
+# test_data_dir: 'dataset/data/ae_val_data'
+# flow model dataset
+train_data_dir: 'dataset/data/data_exp_04'
+test_data_dir: 'dataset/data/data_exp_05'
 field_name: 'x, y, intensity'
+gen_gt: False
 
 #lidarparameter
 lidar_param:
@@ -35,5 +45,3 @@ lidar_to_imu:
 learning_rate: 1e-4
 weight_decay: 5e-4
 epoch: 5
-reliability_thr: 0.9
-repeatability_thr: 0.9

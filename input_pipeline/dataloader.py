@@ -7,9 +7,10 @@ import torch
 from torch.utils.data import DataLoader
 from utils.common import patch_extractor
 
-img_mean = [0.5]
-img_std = [0.125]
+img_mean = [5.4289184]
+img_std = [9.20105]
 normalize_img = tvf.Compose([tvf.ToTensor(), tvf.Normalize(mean=img_mean, std=img_std)])
+# normalize_img = tvf.Compose([tvf.ToTensor()])
 
 
 class PairLoader:
@@ -68,9 +69,8 @@ class SingleLoader:
         return len(self.dataset)
 
     def __getitem__(self, i):
-        # Retrieve an image pair and their absolute flow
         img = self.dataset.get_item(i)
-        return {'img': self.norm(np.array(img))}
+        return {'img': self.norm(img)}
 
 
 def threaded_loader(loader, iscuda, threads, batch_size=1, shuffle=True):
@@ -98,8 +98,7 @@ def threaded_loader(loader, iscuda, threads, batch_size=1, shuffle=True):
         shuffle=shuffle,
         sampler=None,
         num_workers=threads,
-        pin_memory=iscuda,
-        collate_fn=collate)
+        pin_memory=iscuda)
 
 
 def collate(batch, _use_shared_memory=True):
@@ -115,7 +114,7 @@ def collate(batch, _use_shared_memory=True):
             # If we're in a background process, concatenate directly into a
             # shared memory tensor to avoid an extra copy
             numel = sum([x.numel() for x in batch])
-            storage = batch[0].storage()._new_shared(numel)
+            storage = batch[0].untyped_storage()._new_shared(numel)
             out = batch[0].new(storage)
         return torch.stack(batch, 0, out=out)
     elif elem_type.__module__ == 'numpy' and elem_type.__name__ != 'str_' \
