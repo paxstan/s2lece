@@ -13,7 +13,8 @@ class LidarDataConverter:
     From LiDAR-bonnetal
     """
 
-    def __init__(self, lidar_param, lidar_2_imu, save_dir="data_dir"):
+    def __init__(self, lidar_param, lidar_2_imu, save_dir="data_dir", generate_gt=True):
+        self.generate_gt = generate_gt
         self.proj_H = lidar_param["height"]
         self.proj_W = lidar_param["width"]
         self.proj_fov_up = lidar_param["v_fov"]["up"]
@@ -89,21 +90,22 @@ class LidarDataConverter:
         self.proj_idx[proj_y, proj_x] = indices
         self.proj_mask = (self.proj_idx > 0).astype(np.int32)
 
-    def __call__(self, org_data, num, current_pose, next_pose):
+    def __call__(self, org_data, num, current_pose=None, next_pose=None):
         self.points, timestamp_data = np.hsplit(np.array(org_data), [3])
         timestamp_data = timestamp_data.reshape(-1)
 
         self.point_cloud_to_np_array()
-        world_points = convert_to_world_frame(
-            self.points, timestamp_data, current_pose, next_pose, self.rotation_l2i, self.translation_l2i)
         save_dir = os.path.join(self.save_dir, str(num))
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         np.save(os.path.join(save_dir, "idx.npy"), self.proj_idx)
-        np.save(os.path.join(save_dir, "world_frame.npy"), np.array(world_points))
         np.save(os.path.join(save_dir, "range.npy"), self.proj_range)
         np.save(os.path.join(save_dir, "valid_mask.npy"), self.proj_mask)
         np.save(os.path.join(save_dir, "xyz.npy"), self.points)
+        if self.generate_gt:
+            world_points = convert_to_world_frame(
+                self.points, timestamp_data, current_pose, next_pose, self.rotation_l2i, self.translation_l2i)
+            np.save(os.path.join(save_dir, "world_frame.npy"), np.array(world_points))
         self.reset()
 
 
