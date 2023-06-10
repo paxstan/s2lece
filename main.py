@@ -6,10 +6,12 @@ from input_pipeline.dataset import RealPairDataset, SyntheticPairDataset, Single
 from input_pipeline.dataloader import PairLoader, threaded_loader, SythPairLoader, SingleLoader
 from input_pipeline.preprocessing import RandomScale, RandomTilting, PixelNoise, RandomTranslation, RandomCrop
 import yaml
-from visualization.visualization import show_flow
+from visualization.visualization import show_flow, flow_to_color
 from utils import common
-from models.model import FlowModel, AutoEncoder
+from models.model import FlowCorrelationCNN, FlowTransformer
+from models.featurenet import AutoEncoder
 import torch
+import torch.nn.functional as F
 from train import TrainAutoEncoder, TrainFlowModel
 from evaluate import evaluate
 
@@ -57,11 +59,20 @@ def main(argv):
                                        crop=RANDOM_CROP, distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
 
         net = AutoEncoder().to(device)
+
+        # for idx, input_data in enumerate(dataloader):
+        #     if idx > 1:
+        #         img = input_data.pop('img')
+        #         img = torch.unsqueeze(torch.tensor(img), 0)
+        #         pred_img, mu, logvar = net(img)
+        #         recon_loss = F.mse_loss(pred_img, img, reduction='mean')
+        #         print("loss:", recon_loss.mean())
+
         if FLAGS.train:
             loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)
             test_loader = threaded_loader(test_dataloader, batch_size=4, iscuda=iscuda, threads=1)
             train = TrainAutoEncoder(net=net, dataloader=loader, test_dataloader=test_loader,
-                                     epochs=5, config=config, title="CAE", is_cuda=iscuda)
+                                     epochs=50, config=config, title="CAE_50", is_cuda=iscuda)
             train()
 
         else:
@@ -78,7 +89,21 @@ def main(argv):
                                      crop=RANDOM_CROP,
                                      distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
 
-        net = FlowModel(config, device)
+        net = FlowTransformer(config, device)
+
+        for idx, input_data in enumerate(dataloader):
+            if idx > 1:
+                img1 = input_data.pop('img1')
+                img2 = input_data.pop('img2')
+                flow = input_data.pop('aflow')
+                img1 = torch.unsqueeze(torch.tensor(img1), 0)
+                img2 = torch.unsqueeze(torch.tensor(img2), 0)
+                target_flow = torch.unsqueeze(torch.tensor(flow), 0)
+                pred_flow = net(img1, img2)
+                epe_loss = torch.norm(target_flow - pred_flow, p=2, dim=1)
+                flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
+                epe_loss = epe_loss[~flow_mask]
+                print("loss:", epe_loss.mean())
 
         if FLAGS.train:
             loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)

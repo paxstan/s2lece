@@ -64,7 +64,7 @@ class DatasetCreator:
         np.save(self.gt_path, np.array(list_gt))
         bag.close()
 
-    def generate_pairs(self, threshold):
+    def generate_pairs(self, threshold=np.inf):
         list_of_pairs = []
         dt = np.dtype([('source', np.int32), ('target', np.int32), ('corres', 'object')])
         poses = self.ground_truth_imu[:, 1:4]

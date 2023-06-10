@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 import numpy as np
 from spatial_correlation_sampler import spatial_correlation_sample
 from visualization.visualization import flow2rgb, display_flows, flow_to_color
@@ -155,3 +156,4 @@ class CorrelationNetwork(nn.Module):
         # display_flows(original_flow=og_flow, flow_projected_2=flow_gt, predicted_flow=pred_flow)
 
         return pred_flow
+

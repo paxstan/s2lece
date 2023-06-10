@@ -5,7 +5,6 @@ from input_pipeline.dataset import SyntheticPairDataset
 import open3d as o3d
 from utils.extract_keypoints import *
 from models.old.patchnet import *
-from models.local_net_ae import ConvolutionAE
 
 
 def load_network(model_path):

@@ -4,7 +4,7 @@
 
 import pdb
 import numpy as np
-import matplotlib.pyplot as pl
+import matplotlib.pyplot as plt
 
 
 def make_colorwheel():
@@ -143,26 +143,26 @@ def show_flow(img0, img1, flow, mask=None):
     assert flow.shape[:2] == img0.shape[:2] and flow.shape[2] == 2
 
     def noticks():
-        pl.xticks([])
-        pl.yticks([])
+        plt.xticks([])
+        plt.yticks([])
 
-    fig = pl.figure("showing correspondences")
-    ax1 = pl.subplot(221)
+    fig = plt.figure("showing correspondences")
+    ax1 = plt.subplot(221)
     ax1.numaxis = 0
-    pl.imshow(img0 * mask)
+    plt.imshow(img0 * mask)
     noticks()
-    ax2 = pl.subplot(222)
+    ax2 = plt.subplot(222)
     ax2.numaxis = 1
-    pl.imshow(img1)
+    plt.imshow(img1)
     noticks()
 
-    ax = pl.subplot(212)
+    ax = plt.subplot(212)
     ax.numaxis = 0
     flow_img = flow_to_color(np.where(np.isnan(flow), 0, flow))
-    pl.imshow(flow_img * mask)
+    plt.imshow(flow_img * mask)
     noticks()
 
-    pl.subplots_adjust(0.01, 0.01, 0.99, 0.99, wspace=0.02, hspace=0.02)
+    plt.subplots_adjust(0.01, 0.01, 0.99, 0.99, wspace=0.02, hspace=0.02)
 
     def motion_notify_callback(event):
         if event.inaxes is None:
@@ -191,7 +191,7 @@ def show_flow(img0, img1, flow, mask=None):
 
     cid_move = fig.canvas.mpl_connect('motion_notify_event', motion_notify_callback)
     print("Move your mouse over the images to show matches (ctrl-C to quit)")
-    pl.show(block=True)
+    plt.show(block=True)
 
 
 def flow2rgb(flow_map, max_value):
@@ -211,12 +211,26 @@ def flow2rgb(flow_map, max_value):
 
 def display_flows(**kwargs):
     # Create subplots
-    fig, axes = pl.subplots(len(kwargs), 1, sharex=True, sharey=True)
+    fig, axes = plt.subplots(len(kwargs), 1, sharex=True, sharey=True)
 
     for index, (key, value) in enumerate(kwargs.items()):
         rgb_flow = flow2rgb(20 * value, max_value=None)
         img = (rgb_flow * 255).astype(np.uint8).transpose(1, 2, 0)
         axes[index].imshow(img, cmap='gray')
         axes[index].set_title(key)
-    pl.tight_layout()
-    pl.show()
+    plt.tight_layout()
+    plt.show()
+
+
+def visualize_correlation(corr_result, grid_size):
+    corr_result = corr_result.detach().squeeze().numpy()
+    fig, axs = plt.subplots(grid_size, grid_size, sharex=True, sharey=True)
+    for i in range(grid_size):
+        for j in range(grid_size):
+            # Select the channel to plot
+            channel = corr_result[i * grid_size + j]
+
+            # Plot the channel in the corresponding subplot
+            axs[i, j].imshow(channel)
+            axs[i, j].set_title(f'Channel {i * grid_size + j}')
+            axs[i, j].axis('off')
