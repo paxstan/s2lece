@@ -73,3 +73,14 @@ class Decoder(nn.Module):
         self.decoder.append(de_conv_layer("de_fe_l3", 8, 4, decoder=True))  # [1, 64, 8, 256]
         self.decoder.append(de_conv_layer("de_fe_l4", 4, 2, max_pooled=False, decoder=True))  # [1, 128, 8, 256]
         self.decoder.append(de_conv_layer("de_fe_l5", 2, in_channel, decoder=True))  # [1, 256, 4, 128]
+
+
+class ContextNet(nn.Module):
+    def __init__(self, in_channel=1):
+        super(ContextNet, self).__init__()
+        self.encoder = nn.ModuleList()
+        self.encoder.append(conv_layer("fe_l1", in_channel, 2, instance_norm=True))  # [1, 16, 16, 512]
+        self.encoder.append(conv_layer("fe_l2", 2, 4, max_pooling=False, instance_norm=True))  # [1, 32, 16, 512]
+        self.encoder.append(conv_layer("fe_l3", 4, 8, instance_norm=True))  # [1, 64, 8, 256]
+        self.encoder.append(conv_layer("fe_l4", 8, 16, max_pooling=False, instance_norm=True))  # [1, 128, 8, 256]
+        self.encoder.append(conv_layer("fe_l5", 16, 32, instance_norm=True))  # [1, 256, 4, 128]

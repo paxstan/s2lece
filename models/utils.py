@@ -5,16 +5,29 @@ from spatial_correlation_sampler import spatial_correlation_sample
 import math
 
 
-def conv_layer(name, in_channel, out_channel, kernel_size=(3, 3), stride=(1, 1), max_pooling=True):
+def coords_grid(batch, ht, wd, normalize=False):
+    if normalize:  # [-1, 1]
+        coords = torch.meshgrid(2 * torch.arange(ht) / (ht - 1) - 1,
+                                2 * torch.arange(wd) / (wd - 1) - 1)
+    else:
+        coords = torch.meshgrid(torch.arange(ht), torch.arange(wd))
+    coords = torch.stack(coords[::-1], dim=0).float()
+    return coords[None].repeat(batch, 1, 1, 1)  # [B, 2, H, W]
+
+
+def conv_layer(name, in_channel, out_channel, kernel_size=(3, 3), stride=(1, 1), max_pooling=True, instance_norm=False):
     seq_model = nn.Sequential()
     seq_model.add_module(f"conv_{name}",
                          nn.Conv2d(in_channel, out_channel,
                                    kernel_size=kernel_size, stride=stride,
                                    padding=((kernel_size[0] - 1) // 2, (kernel_size[1] - 1) // 2), bias=False))
-    seq_model.add_module(f"bn_{name}", nn.BatchNorm2d(out_channel))
-    seq_model.add_module(f"activ_{name}", nn.LeakyReLU(0.1, inplace=True))
+    if instance_norm:
+        seq_model.add_module(f"instance_{name}", nn.InstanceNorm2d(out_channel))
+    else:
+        seq_model.add_module(f"bn_{name}", nn.BatchNorm2d(out_channel))
     if max_pooling:
         seq_model.add_module(f"max_pool_{name}", nn.MaxPool2d(kernel_size=(1, 2), stride=(1, 2)))
+    seq_model.add_module(f"activ_{name}", nn.LeakyReLU(0.1, inplace=True))
     return seq_model
 
 
@@ -176,3 +189,165 @@ class NerfPositionalEncoding(nn.Module):
                                                                      self.bases], axis=-1)
         assert torch.isnan(out).any() == False
         return out
+
+
+class Correlation1D:
+    def __init__(self, feature1, feature2,
+                 radius=32,
+                 x_correlation=False,
+                 ):
+        self.radius = radius
+        self.x_correlation = x_correlation
+
+        if self.x_correlation:
+            self.corr = self.corr_x(feature1, feature2)  # [B*H*W, 1, 1, W]
+        else:
+            self.corr = self.corr_y(feature1, feature2)  # [B*H*W, 1, H, 1]
+
+    def __call__(self, coords):
+        r = self.radius
+        coords = coords.permute(0, 2, 3, 1)  # [B, H, W, 2]
+        b, h, w = coords.shape[:3]
+
+        if self.x_correlation:
+            dx = torch.linspace(-r, r, 2 * r + 1)
+            dy = torch.zeros_like(dx)
+            delta_x = torch.stack((dx, dy), dim=-1).to(coords.device)  # [2r+1, 2]
+
+            coords_x = coords[:, :, :, 0]  # [B, H, W]
+            coords_x = torch.stack((coords_x, torch.zeros_like(coords_x)), dim=-1)  # [B, H, W, 2]
+
+            centroid_x = coords_x.view(b * h * w, 1, 1, 2)  # [B*H*W, 1, 1, 2]
+            coords_x = centroid_x + delta_x  # [B*H*W, 1, 2r+1, 2]
+
+            coords_x = 2 * coords_x / (w - 1) - 1  # [-1, 1], y is always 0
+
+            corr_x = F.grid_sample(self.corr, coords_x, mode='bilinear',
+                                   align_corners=True)  # [B*H*W, G, 1, 2r+1]
+
+            corr_x = corr_x.view(b, h, w, -1)  # [B, H, W, (2r+1)*G]
+            corr_x = corr_x.permute(0, 3, 1, 2).contiguous()  # [B, (2r+1)*G, H, W]
+            return corr_x
+        else:  # y correlation
+            dy = torch.linspace(-r, r, 2 * r + 1)
+            dx = torch.zeros_like(dy)
+            delta_y = torch.stack((dx, dy), dim=-1).to(coords.device)  # [2r+1, 2]
+            delta_y = delta_y.unsqueeze(1).unsqueeze(0)  # [1, 2r+1, 1, 2]
+
+            coords_y = coords[:, :, :, 1]  # [B, H, W]
+            coords_y = torch.stack((torch.zeros_like(coords_y), coords_y), dim=-1)  # [B, H, W, 2]
+
+            centroid_y = coords_y.view(b * h * w, 1, 1, 2)  # [B*H*W, 1, 1, 2]
+            coords_y = centroid_y + delta_y  # [B*H*W, 2r+1, 1, 2]
+
+            coords_y = 2 * coords_y / (h - 1) - 1  # [-1, 1], x is always 0
+
+            corr_y = F.grid_sample(self.corr, coords_y, mode='bilinear',
+                                   align_corners=True)  # [B*H*W, G, 2r+1, 1]
+
+            corr_y = corr_y.view(b, h, w, -1)  # [B, H, W, (2r+1)*G]
+            corr_y = corr_y.permute(0, 3, 1, 2).contiguous()  # [B, (2r+1)*G, H, W]
+
+            return corr_y
+
+    def corr_x(self, feature1, feature2):
+        b, c, h, w = feature1.shape  # [B, C, H, W]
+        scale_factor = c ** 0.5
+
+        # x direction
+        feature1 = feature1.permute(0, 2, 3, 1)  # [B, H, W, C]
+        feature2 = feature2.permute(0, 2, 1, 3)  # [B, H, C, W]
+        corr = torch.matmul(feature1, feature2)  # [B, H, W, W]
+
+        corr = corr.unsqueeze(3).unsqueeze(3)  # [B, H, W, 1, 1, W]
+        corr = corr / scale_factor
+        corr = corr.flatten(0, 2)  # [B*H*W, 1, 1, W]
+
+        return corr
+
+    def corr_y(self, feature1, feature2):
+        b, c, h, w = feature1.shape  # [B, C, H, W]
+        scale_factor = c ** 0.5
+
+        # y direction
+        feature1 = feature1.permute(0, 3, 2, 1)  # [B, W, H, C]
+        feature2 = feature2.permute(0, 3, 1, 2)  # [B, W, C, H]
+        corr = torch.matmul(feature1, feature2)  # [B, W, H, H]
+
+        corr = corr.permute(0, 2, 1, 3).contiguous().view(b, h, w, 1, h, 1)  # [B, H, W, 1, H, 1]
+        corr = corr / scale_factor
+        corr = corr.flatten(0, 2)  # [B*H*W, 1, H, 1]
+
+        return corr
+
+
+class PositionEmbeddingSine(nn.Module):
+    """
+    https://github.com/facebookresearch/detr/blob/main/models/position_encoding.py
+    This is a more standard version of the position embedding, very similar to the one
+    used by the Attention is all you need paper, generalized to work on images.
+    """
+
+    def __init__(self, num_pos_feats=64, temperature=10000, normalize=True, scale=None):
+        super().__init__()
+        self.num_pos_feats = num_pos_feats
+        self.temperature = temperature
+        self.normalize = normalize
+        if scale is not None and normalize is False:
+            raise ValueError("normalize should be True if scale is passed")
+        if scale is None:
+            scale = 2 * math.pi
+        self.scale = scale
+
+    def forward(self, x):
+        # x = tensor_list.tensors  # [B, C, H, W]
+        # mask = tensor_list.mask  # [B, H, W], input with padding, valid as 0
+        b, c, h, w = x.size()
+        mask = torch.ones((b, h, w), device=x.device)  # [B, H, W]
+        y_embed = mask.cumsum(1, dtype=torch.float32)
+        x_embed = mask.cumsum(2, dtype=torch.float32)
+        if self.normalize:
+            eps = 1e-6
+            y_embed = y_embed / (y_embed[:, -1:, :] + eps) * self.scale
+            x_embed = x_embed / (x_embed[:, :, -1:] + eps) * self.scale
+
+        dim_t = torch.arange(self.num_pos_feats, dtype=torch.float32, device=x.device)
+        dim_t = self.temperature ** (2 * (dim_t // 2) / self.num_pos_feats)
+
+        pos_x = x_embed[:, :, :, None] / dim_t
+        pos_y = y_embed[:, :, :, None] / dim_t
+        pos_x = torch.stack((pos_x[:, :, :, 0::2].sin(), pos_x[:, :, :, 1::2].cos()), dim=4).flatten(3)
+        pos_y = torch.stack((pos_y[:, :, :, 0::2].sin(), pos_y[:, :, :, 1::2].cos()), dim=4).flatten(3)
+        pos = torch.cat((pos_y, pos_x), dim=3).permute(0, 3, 1, 2)
+        return pos
+
+
+def loss_criterion(flow_preds, flow_gt, valid, gamma=0.8, max_flow=400,
+              ):
+    """ Loss function defined over sequence of flow predictions
+     """
+
+    n_predictions = len(flow_preds)
+    flow_loss = 0.0
+
+    # exlude invalid pixels and extremely large diplacements
+    mag = torch.sum(flow_gt ** 2, dim=1).sqrt()
+    valid = valid & (mag < max_flow)
+
+    for i in range(n_predictions):
+        i_weight = gamma ** (n_predictions - i - 1)
+        i_loss = (flow_preds[i] - flow_gt).abs()
+
+        flow_loss += i_weight * (valid[:, None] * i_loss).mean()
+
+    epe = torch.sum((flow_preds[-1] - flow_gt) ** 2, dim=1).sqrt()
+    epe = epe.view(-1)[valid.view(-1)]
+
+    metrics = {
+        'epe': epe.mean().item(),
+        '1px': (epe > 1).float().mean().item(),
+        '3px': (epe > 3).float().mean().item(),
+        '5px': (epe > 5).float().mean().item(),
+    }
+
+    return flow_loss, metrics

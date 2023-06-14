@@ -12,10 +12,12 @@ class CorrelationNet(nn.Module):
         self._make_flow_prediction_layer(288, name="2_1", max_pooled=False)
         self._make_flow_prediction_layer(272, name="1_0")
         # self.correlation.append(predict_flow_layer(1025))
-        self.correlation.append(predict_flow_layer(2))
+        # self.correlation.append(predict_flow_layer(2))
+        self.softmax = nn.Softmax(dim=1)
 
     def _make_flow_prediction_layer(self, in_channel, name, max_pooled=True):
-        # pf_layer = predict_flow_layer(in_channel)
+        pf_layer = predict_flow_layer(in_channel)
         upsample_pf_layer = de_conv_layer(f"flow_up_{name}", 2, 2, max_pooled=max_pooled)
-        # pf_seq = nn.Sequential(pf_layer, *upsample_pf_layer)
-        self.correlation.append(upsample_pf_layer)
+        pf_seq = nn.Sequential(pf_layer, *upsample_pf_layer)
+        self.correlation.append(pf_seq)
+

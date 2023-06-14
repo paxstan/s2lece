@@ -35,7 +35,7 @@ class DatasetCreator:
             print("raw dataset already extracted !")
 
     def point_cloud_extractor(self):
-        i = 0
+        i = 9085
         list_gt = []
         bag = rosbag.Bag(self.config['ros_bag_path'])
         try:

@@ -6,14 +6,16 @@ from input_pipeline.dataset import RealPairDataset, SyntheticPairDataset, Single
 from input_pipeline.dataloader import PairLoader, threaded_loader, SythPairLoader, SingleLoader
 from input_pipeline.preprocessing import RandomScale, RandomTilting, PixelNoise, RandomTranslation, RandomCrop
 import yaml
-from visualization.visualization import show_flow, flow_to_color
+from visualization.visualization import show_flow, flow2rgb
 from utils import common
 from models.model import FlowCorrelationCNN, FlowTransformer
 from models.featurenet import AutoEncoder
+from models.utils import loss_criterion
 import torch
-import torch.nn.functional as F
+from PIL import Image
 from train import TrainAutoEncoder, TrainFlowModel
 from evaluate import evaluate
+import matplotlib.pyplot as plt
 
 RANDOM_SCALE = RandomScale(min_size=80, max_size=128, can_upscale=True)
 RANDOM_TILT = RandomTilting(magnitude=0.025, directions="left")
@@ -91,19 +93,38 @@ def main(argv):
 
         net = FlowTransformer(config, device)
 
+        # net = FlowCorrelationCNN(config, device)
+
         for idx, input_data in enumerate(dataloader):
             if idx > 1:
                 img1 = input_data.pop('img1')
                 img2 = input_data.pop('img2')
                 flow = input_data.pop('aflow')
+                valid_mask = input_data.pop('mask')
                 img1 = torch.unsqueeze(torch.tensor(img1), 0)
                 img2 = torch.unsqueeze(torch.tensor(img2), 0)
                 target_flow = torch.unsqueeze(torch.tensor(flow), 0)
+                valid_mask = torch.unsqueeze(torch.tensor(valid_mask), 0)
                 pred_flow = net(img1, img2)
-                epe_loss = torch.norm(target_flow - pred_flow, p=2, dim=1)
-                flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
-                epe_loss = epe_loss[~flow_mask]
-                print("loss:", epe_loss.mean())
+                # target_flow_img = Image.fromarray(flow2rgb(target_flow), mode='RGB')
+                # pred_flow_img = Image.fromarray(flow2rgb(pred_flow[0]), mode='RGB')
+                # target_flow_img.save("runs/target_flow.png")
+                # pred_flow_img.save("runs/pred_flow.png")
+                flow_loss, metrics = loss_criterion(pred_flow, target_flow, valid_mask)
+                print(flow_loss)
+                print(metrics)
+
+                plt.imshow(flow2rgb(target_flow).transpose(1, 2, 0))
+                plt.axis('off')
+                plt.savefig('tg_flow.png', format='png', dpi=300, bbox_inches='tight')
+
+                plt.imshow(flow2rgb(pred_flow[-1]).transpose(1, 2, 0))
+                plt.axis('off')
+                plt.savefig('pd_flow.png', format='png', dpi=300, bbox_inches='tight')
+                # epe_loss = torch.norm(target_flow - pred_flow, p=2, dim=1)
+                # flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
+                # epe_loss = epe_loss[~flow_mask]
+                # print("loss:", epe_loss.mean())
 
         if FLAGS.train:
             loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)
