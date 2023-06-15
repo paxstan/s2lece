@@ -3,9 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.featurenet import FeatureExtractorNet, ContextNet
-from models.correlationnet import CorrelationNet
-from models.attention import SelfAttention, Attention1D
-from models.update import BasicUpdateBlock
+from models.correlationnet import CorrelationNet, SleceNet
 from models.utils import correlate, warp, linear_position_embedding_sine, de_conv_layer, Correlation1D, \
     PositionEmbeddingSine, coords_grid
 
@@ -112,54 +110,30 @@ class FlowCorrelationCNN(FlowModel):
 
 
 class FlowTransformer(FlowModel):
-    def __init__(self, config, device, train=True, corr_radius=32, ):
+    def __init__(self, config, device, train=True, corr_radius=32):
         super().__init__(config, device, train)
         self.context_net = ContextNet()
         self.embedded_dim = 32
-        self.down_sample_factor = 8
-        self.layers = nn.ModuleList([])
-        self.conv_embedding = nn.Sequential(
-            nn.Conv2d(in_channels=4096, out_channels=self.embedded_dim,
-                      kernel_size=(3, 3), padding=(1, 1), stride=(1, 1)),
-            nn.ReLU(),
-            # nn.Conv2d(in_channels=1024, out_channels=self.embedded_dim,
-            #           kernel_size=(3, 3), padding=(1, 1), stride=(1, 1)),
-        )
-        self.linear_embedding = nn.Sequential(
-            nn.Linear(4096, self.embedded_dim),
-            nn.LayerNorm(self.embedded_dim)
-        )
+        self.downsample_factor = 8
 
-        self.corr_radius = corr_radius
-        corr_channels = (2 * corr_radius + 1) * 2
+        self.slece_net = SleceNet(self.embedded_dim, self.downsample_factor)
 
-        self.attention_layer = SelfAttention(input_dim=self.embedded_dim)
+        # self.conv_embedding = nn.Sequential(
+        #     nn.Conv2d(in_channels=4096, out_channels=self.embedded_dim,
+        #               kernel_size=(3, 3), padding=(1, 1), stride=(1, 1)),
+        #     nn.ReLU()
+        # )
+        # self.corr_radius = corr_radius
+        # corr_channels = (2 * corr_radius + 1) * 2
 
-        self.transformer = nn.Transformer(
-            d_model=64,
-            nhead=8,
-            num_encoder_layers=5,
-            num_decoder_layers=5,
-            dropout=0.1,
-        )
-        self.out = nn.Linear(32, 4096)
-        self.soft = nn.Softmax(dim=2)
-
-        self.upsample_flow = de_conv_layer(f"flow_up_1_2", 2, 2, max_pooled=True)
-
-        self.cross_attn_x = Attention1D(self.embedded_dim,
-                                        y_attention=False,
-                                        double_cross_attn=True,
-                                        )
-        self.cross_attn_y = Attention1D(self.embedded_dim,
-                                        y_attention=True,
-                                        double_cross_attn=True,
-                                        )
-        # Update block
-        self.update_block = BasicUpdateBlock(corr_channels=self.embedded_dim,
-                                             hidden_dim=self.embedded_dim,
-                                             context_dim=self.embedded_dim,
-                                             downsample_factor=self.downsample_factor)
+        # self.cross_attn_x = Attention1D(self.embedded_dim,
+        #                                 y_attention=False,
+        #                                 double_cross_attn=True,
+        #                                 )
+        # self.cross_attn_y = Attention1D(self.embedded_dim,
+        #                                 y_attention=True,
+        #                                 double_cross_attn=True,
+        #                                 )
 
     def initialize_flow(self, img, downsample=None):
         """ Flow is represented as difference between two coordinate grids flow = coords1 - coords0"""
@@ -189,7 +163,7 @@ class FlowTransformer(FlowModel):
             x = layers(x)
         return x
 
-    def forward(self, x1, x2, flow_init=None, iters=5):
+    def forward(self, x1, x2, flow_init=None):
         predict_flow = None
 
         x1_context = self.extract_context(x1)  # extract context from x1
@@ -203,22 +177,22 @@ class FlowTransformer(FlowModel):
         b, dim, h, w = feature1.size()
 
         # position encoding
-        pos_channels = self.embedded_dim // 2
-        pos_enc = PositionEmbeddingSine(pos_channels)
-
-        position = pos_enc(feature1)  # [B, C, H, W]
-
-        feature2_x, attn_x = self.cross_attn_x(feature1, feature2, position)
-        corr_fn_y = Correlation1D(feature1, feature2_x,
-                                  radius=self.corr_radius,
-                                  x_correlation=False,
-                                  )
-
-        feature2_y, attn_y = self.cross_attn_y(feature1, feature2, position)
-        corr_fn_x = Correlation1D(feature1, feature2_y,
-                                  radius=self.corr_radius,
-                                  x_correlation=True,
-                                  )
+        # pos_channels = self.embedded_dim // 2
+        # pos_enc = PositionEmbeddingSine(pos_channels)
+        #
+        # position = pos_enc(feature1)  # [B, C, H, W]
+        #
+        # feature2_x, attn_x = self.cross_attn_x(feature1, feature2, position)
+        # corr_fn_y = Correlation1D(feature1, feature2_x,
+        #                           radius=self.corr_radius,
+        #                           x_correlation=False,
+        #                           )
+        #
+        # feature2_y, attn_y = self.cross_attn_y(feature1, feature2, position)
+        # corr_fn_x = Correlation1D(feature1, feature2_y,
+        #                           radius=self.corr_radius,
+        #                           x_correlation=True,
+        #                           )
 
         coords0, coords1 = self.initialize_flow(x1)
 
@@ -230,7 +204,7 @@ class FlowTransformer(FlowModel):
         for i in range(20):
             coords1 = coords1.detach()  # stop gradient
             flow = coords1 - coords0
-            print(flow.detach().mean())
+            # print(flow.detach().mean())
 
             # Attention 1D
             # corr_x = corr_fn_x(coords1)
@@ -245,13 +219,40 @@ class FlowTransformer(FlowModel):
             # net, up_mask, delta_flow = self.update_block(net, inp, corr_val, flow, upsample=True)
 
             # transformer correlation
-            corr_val = self.corr(feature1, feature2)
+            # corr_val = self.corr(feature1, feature2)
+            # b, h1, w1, = corr_val.size()
+            # corr_embedded = self.linear_embedding(corr_val)  # source correlation embedding
+            # corr_embedded = linear_position_embedding_sine(corr_embedded)  # source embedding with positional encoding
+            # corr_attention = self.attention_layer(corr_embedded)
+            # corr_attention = corr_attention.permute(0, 2, 1).view(b, self.embedded_dim, h, w)
+            # net, up_mask, delta_flow = self.update_block(net, inp, corr_attention, flow, upsample=True)
+            # coords1 = coords1 + delta_flow
+            # flow_up = self.learned_upflow(coords1 - coords0, up_mask)
+            # flow_predictions.append(flow_up)
+
+            # cross attention transformer
+            # feature1_embedded = self.cross_linear_embedding(feature1.flatten(2).permute(0, 2, 1))
+            # feature2_embedded = self.cross_linear_embedding(feature2.flatten(2).permute(0, 2, 1))
+
+            # feature1_embedded = linear_position_embedding_sine(feature1_embedded)
+            # feature2_embedded = linear_position_embedding_sine(feature2_embedded)
+
+            # feature2_attn = self.cross_attention_layer(feature1_embedded, feature2_embedded)
+            feature2_attn = self.slece_net.cross_attention_layer(feature1, feature2)
+            b, h1, w1, = feature2_attn.size()
+            feature2_attn = feature2_attn.permute(0, 2, 1).view(b, w1, h, w)
+
+            corr_val = self.corr(feature1, feature2_attn)
             b, h1, w1, = corr_val.size()
-            corr_embedded = self.linear_embedding(corr_val)  # source correlation embedding
-            corr_embedded = linear_position_embedding_sine(corr_embedded)  # source embedding with positional encoding
-            corr_attention = self.attention_layer(corr_embedded)
+
+            # corr_embedded = self.self_linear_embedding(corr_val)  # source correlation embedding
+            # corr_embedded = linear_position_embedding_sine(corr_embedded)  # source embedding with positional encoding
+            # corr_attention = self.self_attention_layer(corr_embedded)
+            corr_attention = self.slece_net.self_attention_layer(corr_val)
             corr_attention = corr_attention.permute(0, 2, 1).view(b, self.embedded_dim, h, w)
-            net, up_mask, delta_flow = self.update_block(net, inp, corr_attention, flow, upsample=True)
+
+            net, up_mask, delta_flow = self.slece_net.update_block(net, inp, corr_attention, flow, upsample=True)
+
             coords1 = coords1 + delta_flow
             flow_up = self.learned_upflow(coords1 - coords0, up_mask)
             flow_predictions.append(flow_up)

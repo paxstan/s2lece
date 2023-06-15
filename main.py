@@ -96,7 +96,7 @@ def main(argv):
         # net = FlowCorrelationCNN(config, device)
 
         for idx, input_data in enumerate(dataloader):
-            if idx > 1:
+            if idx < 10:
                 img1 = input_data.pop('img1')
                 img2 = input_data.pop('img2')
                 flow = input_data.pop('aflow')
@@ -106,21 +106,17 @@ def main(argv):
                 target_flow = torch.unsqueeze(torch.tensor(flow), 0)
                 valid_mask = torch.unsqueeze(torch.tensor(valid_mask), 0)
                 pred_flow = net(img1, img2)
-                # target_flow_img = Image.fromarray(flow2rgb(target_flow), mode='RGB')
-                # pred_flow_img = Image.fromarray(flow2rgb(pred_flow[0]), mode='RGB')
-                # target_flow_img.save("runs/target_flow.png")
-                # pred_flow_img.save("runs/pred_flow.png")
                 flow_loss, metrics = loss_criterion(pred_flow, target_flow, valid_mask)
                 print(flow_loss)
-                print(metrics)
+                # print(metrics)
 
                 plt.imshow(flow2rgb(target_flow).transpose(1, 2, 0))
                 plt.axis('off')
-                plt.savefig('tg_flow.png', format='png', dpi=300, bbox_inches='tight')
+                plt.savefig(f'runs/tg_flow_{idx}.png', format='png', dpi=300, bbox_inches='tight')
 
                 plt.imshow(flow2rgb(pred_flow[-1]).transpose(1, 2, 0))
                 plt.axis('off')
-                plt.savefig('pd_flow.png', format='png', dpi=300, bbox_inches='tight')
+                plt.savefig(f'runs/pd_flow_{idx}.png', format='png', dpi=300, bbox_inches='tight')
                 # epe_loss = torch.norm(target_flow - pred_flow, p=2, dim=1)
                 # flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
                 # epe_loss = epe_loss[~flow_mask]

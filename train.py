@@ -4,6 +4,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import wandb
 import torch.nn.functional as F
+from models.utils import loss_criterion
 
 
 # iscuda = False
@@ -229,3 +230,35 @@ class TrainFlowModel(Train):
                 losses.append(loss.detach().item())
 
         self.val_loss = (sum(losses) / len(losses))  # calculate mean
+
+
+class TrainSleceNet(Train):
+    def __init__(self, net, dataloader, test_dataloader, epochs=5, config=None, is_cuda=False):
+        self.net = net
+        self.dataloader = dataloader
+        self.test_dataloader = test_dataloader
+        self.epochs = epochs
+        self.config = config
+        wandb_config = {
+            "learning_rate": 1e-4,
+            "architecture": "SLECE Net",
+            "dataset": "Hilti exp04",
+            "epochs": self.epochs,
+        }
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-4)
+        super().__init__(is_cuda=is_cuda, wandb_config=wandb_config)
+
+    def train_slecenet(self):
+        for i in range(self.epochs):
+            for _, inputs in enumerate(tqdm(self.dataloader)):
+                inputs = self.todevice(inputs)
+                img1 = inputs.pop('img1')
+                img2 = inputs.pop('img2')
+                target_flow = inputs.pop('aflow')
+                valid_mask = inputs.pop('mask')
+                pred_flow = self.net(img1, img2)
+                flow_loss, metrics = loss_criterion(pred_flow, target_flow, valid_mask)
+
+                self.optimizer.zero_grad()
+                flow_loss.backward()
+                self.optimizer.step()

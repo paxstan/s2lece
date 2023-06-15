@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
 import copy
+from models.utils import linear_position_embedding_sine
 
 
-class SelfAttention(nn.Module):
+class Attention(nn.Module):
     def __init__(self, input_dim):
-        super(SelfAttention, self).__init__()
-
+        super(Attention, self).__init__()
         self.scale = nn.Parameter(torch.sqrt(torch.FloatTensor([input_dim])))
 
         self.key_layer = nn.Linear(input_dim, input_dim)
@@ -21,10 +21,54 @@ class SelfAttention(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)  # original Transformer initialization
 
-    def forward(self, source):
+
+class SelfAttention(Attention):
+    def __init__(self, input_dim, in_channel=4096):
+        super(SelfAttention, self).__init__(input_dim)
+
+        self.self_linear_embedding = nn.Sequential(
+            nn.Linear(in_channel, input_dim),
+            nn.LayerNorm(input_dim)
+        )
+
+    def forward(self, corr):
+        corr_embedded = self.self_linear_embedding(corr)  # source correlation embedding
+        corr_embedded = linear_position_embedding_sine(corr_embedded)  # source embedding with positional encoding
+
+        query = self.query_layer(corr_embedded)
+        key = self.key_layer(corr_embedded)
+        value = self.value_layer(corr_embedded)
+
+        # calculate similarity between query and key using scaled dot product
+        attention_scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale
+
+        # softmax normalization
+        attention_weights = self.softmax(attention_scores)
+
+        # Apply attention weights to value vectors (convex combination)
+        attention_values = torch.matmul(attention_weights, value)
+
+        # Return the attention values
+        return attention_values
+
+
+class CrossAttention(Attention):
+    def __init__(self, input_dim, in_channel=32):
+        super(CrossAttention, self).__init__(input_dim)
+        self.cross_linear_embedding = nn.Sequential(
+            nn.Linear(in_channel, input_dim),
+            nn.LayerNorm(input_dim)
+        )
+
+    def forward(self, feature1, feature2):
+        source = self.cross_linear_embedding(feature1.flatten(2).permute(0, 2, 1))
+        target = self.cross_linear_embedding(feature2.flatten(2).permute(0, 2, 1))
+        source = linear_position_embedding_sine(source)
+        target = linear_position_embedding_sine(target)
+
         query = self.query_layer(source)
-        key = self.key_layer(source)
-        value = self.value_layer(source)
+        key = self.key_layer(target)
+        value = self.value_layer(target)
 
         # calculate similarity between query and key using scaled dot product
         attention_scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale
