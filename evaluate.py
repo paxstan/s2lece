@@ -1,4 +1,4 @@
-from visualization.visualization import flow_to_color, flow2rgb
+from visualization.visualization import compare_flow, visualize_point_cloud
 from matplotlib import pyplot as plt
 from input_pipeline.dataloader import normalize_img
 import numpy as np
@@ -7,18 +7,23 @@ from models.utils import loss_criterion
 import torch.nn.functional as F
 
 
-def evaluate(net, img1, img2, flow, valid_mask):
+def evaluate(net, img1, img2, flow=None, valid_mask=None, idx=None, metadata=None, random=False):
     img1 = normalize_img(np.array(img1))
     img2 = normalize_img(np.array(img2))
     img1 = torch.unsqueeze(torch.tensor(img1), 0)
     img2 = torch.unsqueeze(torch.tensor(img2), 0)
-    target_flow = torch.unsqueeze(torch.tensor(flow), 0)
-    valid_mask_t = torch.unsqueeze(torch.tensor(valid_mask), 0)
     pred_flow = net(img1, img2)
-    flow_loss, metrics = loss_criterion(pred_flow, target_flow, valid_mask_t, train=False)
-    print(flow_loss)
-    print(metrics)
-    compare_flow(target_flow, pred_flow[-1], valid_mask)
+    if not random:
+        target_flow = torch.unsqueeze(torch.tensor(flow), 0)
+        valid_mask_t = torch.unsqueeze(torch.tensor(valid_mask), 0)
+        flow_loss, metrics = loss_criterion(pred_flow, target_flow, valid_mask_t, train=False)
+        print(flow_loss)
+        print(metrics)
+        compare_flow(target_flow, pred_flow[-1], valid_mask, idx, flow_loss)
+    # else:
+    #     pd_flow = pred_flow[-1].detach().squeeze().numpy().transpose(1, 2, 0)
+    #     plt.show(pd_flow)
+    visualize_point_cloud(pred_flow[-1], metadata)
 
 
 def test_network(type_net, dataloader, net):
@@ -68,23 +73,3 @@ def test_network(type_net, dataloader, net):
                     # plt.axis('off')
                     # # plt.savefig(f'runs/pd_flow_{idx}.png', format='png', dpi=300, bbox_inches='tight')
 
-
-def compare_flow(target_flow, pred_flow, valid_mask):
-    # pred_flow_img = flow2rgb(pred_flow[-1]).transpose(1, 2, 0)
-    # true_flow_img = flow2rgb(target_flow).transpose(1, 2, 0)
-    pred_last_np = np.floor(pred_flow[-1].detach().squeeze().numpy()).transpose(1, 2, 0).reshape(32 * 1024, 2)
-    invalid_mask = ~valid_mask.flatten()
-    pred_last_np[invalid_mask, :] = 0
-    # pred_last_np[1, valid_mask] = 0
-
-    pred_flow_img = flow_to_color(pred_last_np.reshape(32, 1024, 2))
-    true_flow_img = flow_to_color(target_flow.detach().squeeze().numpy().transpose(1, 2, 0))
-
-    fig, axes = plt.subplots(2, 1, sharex=True, sharey=True)
-    axes[0].imshow(true_flow_img.squeeze())
-    axes[0].set_title("original flow")
-
-    axes[1].imshow(pred_flow_img.squeeze())
-    axes[1].set_title("predicted flow")
-
-    plt.show()

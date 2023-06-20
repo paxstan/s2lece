@@ -93,18 +93,35 @@ def main(argv):
             train()
 
         else:
-            evaluation(net, test_r_pair_dt)
+            random_evaluation(net)
+            # evaluation(net, test_r_pair_dt)
 
 
 def evaluation(net, dataset):
     i = random.randint(0, dataset.npairs)
     img_a, img_b, metadata = dataset.get_pair(i)
-    aflow = np.float32(metadata['aflow'])
-    mask = metadata.get('flow_mask', np.ones(aflow.shape[:2], np.uint8))
+    aflow = np.float32(metadata.pop('aflow'))
+    mask = metadata.pop('flow_mask', np.ones(aflow.shape[:2], np.uint8))
     net_weights = torch.load(config['save_path'])
     net.load_state_dict(net_weights["state_dict"])
     net.eval()
-    evaluate(net, img_a, img_b, aflow, mask)
+    evaluate(net, img_a, img_b, aflow, mask, i, metadata)
+
+
+def random_evaluation(net):
+    def load(id1, id2):
+        img1 = np.load(f'dataset/data/ae_val_data/{id1}/range.npy')
+        idx1 = np.load(f'dataset/data/ae_val_data/{id1}/idx.npy')
+        xyz1 = np.load(f'dataset/data/ae_val_data/{id1}/xyz.npy')
+        img2 = np.load(f'dataset/data/ae_val_data/{id2}/range.npy')
+        idx2 = np.load(f'dataset/data/ae_val_data/{id2}/idx.npy')
+        xyz2 = np.load(f'dataset/data/ae_val_data/{id2}/xyz.npy')
+        return img1, img2, {'idx1': idx1, 'idx2': idx2, 'xyz1': xyz1, 'xyz2': xyz2 }
+    img_a, img_b, metadata = load(10, 20)
+    net_weights = torch.load(config['save_path'])
+    net.load_state_dict(net_weights["state_dict"])
+    net.eval()
+    evaluate(net, img_a, img_b, metadata=metadata, random=True)
 
 
 if __name__ == '__main__':

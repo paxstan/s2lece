@@ -97,6 +97,12 @@ class RealPairDataset(LidarBase):
         mask_valid_in_2 = self.load_np_file(os.path.join(self.root,
                                                          "correspondence", corres_dir, 'mask_valid_2.npy'))
 
+        idx1 = self.load_np_file(os.path.join(self.root, source, 'idx.npy'))
+        idx2 = self.load_np_file(os.path.join(self.root, target, 'idx.npy'))
+
+        xyz1 = self.load_np_file(os.path.join(self.root, source, 'xyz.npy'))
+        xyz2 = self.load_np_file(os.path.join(self.root, target, 'xyz.npy'))
+
         h1, w1 = img1.shape
         h2, w2 = img2.shape
 
@@ -123,7 +129,8 @@ class RealPairDataset(LidarBase):
         img2 = img2.reshape(h2, w2)
 
         meta = {'aflow': flow.transpose((2, 0, 1)), 'flow_mask': mask,
-                'mask1': mask1.astype(bool), 'mask2': mask2.astype(bool)}
+                'mask1': mask1.astype(bool), 'mask2': mask2.astype(bool),
+                'idx1': idx1, 'idx2': idx2, 'xyz1': xyz1, 'xyz2': xyz2}
         return img1, img2, meta
 
 

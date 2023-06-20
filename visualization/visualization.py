@@ -5,6 +5,8 @@
 import pdb
 import numpy as np
 import matplotlib.pyplot as plt
+import open3d as o3d
+from models.utils import coords_grid
 
 
 def make_colorwheel():
@@ -204,7 +206,8 @@ def flow2rgb(flow_map, max_value=None):
     else:
         normalized_flow_map = flow_map_np / (np.nanmax(np.abs(flow_map_np)))
     rgb_map[0] += normalized_flow_map[0]  # more red if flow[0] is large
-    rgb_map[1] -= 0.5 * (normalized_flow_map[0] + normalized_flow_map[1])  # more blue if in between displacement is large
+    rgb_map[1] -= 0.5 * (
+            normalized_flow_map[0] + normalized_flow_map[1])  # more blue if in between displacement is large
     rgb_map[2] += normalized_flow_map[1]  # more green if flow[1] is large
     return rgb_map.clip(0, 1)
 
@@ -234,3 +237,97 @@ def visualize_correlation(corr_result, grid_size):
             axs[i, j].imshow(channel)
             axs[i, j].set_title(f'Channel {i * grid_size + j}')
             axs[i, j].axis('off')
+
+
+def compare_flow(target_flow, pred_flow, valid_mask, idx=1, loss=0):
+    pred_last_np = np.floor(pred_flow[-1].detach().squeeze().numpy()).transpose(1, 2, 0).reshape(32 * 1024, 2)
+    invalid_mask = ~valid_mask.flatten()
+    pred_last_np[invalid_mask, :] = 0
+
+    pred_flow_img = flow_to_color(pred_last_np.reshape(32, 1024, 2))
+    true_flow_img = flow_to_color(target_flow.detach().squeeze().numpy().transpose(1, 2, 0))
+
+    fig, axes = plt.subplots(2, 1, sharex=True, sharey=True)
+    axes[0].imshow(true_flow_img.squeeze())
+    axes[0].set_title("original flow")
+
+    axes[1].imshow(pred_flow_img.squeeze())
+    axes[1].set_title("predicted flow")
+
+    # plt.text(2.5, -5, f'loss: {loss}', ha='center')
+    plt.figtext(0.5, 0.05, f'loss: {loss}', ha='center')
+
+    plt.savefig(f"runs/pred_optical_flow_{idx}.png")
+    plt.show()
+
+
+def visualize_point_cloud(pred_flow, metadata, transform=False):
+    pred_flow = pred_flow.detach().squeeze().numpy()
+    c, h, w = pred_flow.shape
+    abs_flow = np.zeros_like(pred_flow)
+    abs_flow[0, :, :] = np.arange(h)[:, np.newaxis]
+    abs_flow[1, :, :] = np.arange(w)
+    abs_flow = np.floor(abs_flow + pred_flow)
+    abs_flow = abs_flow.transpose(1, 2, 0)
+    x_img = abs_flow[:, :, 0].reshape(-1).astype(int)
+    y_img = abs_flow[:, :, 1].reshape(-1).astype(int)
+    mask_valid = (x_img >= 0) * (x_img < h) * (y_img >= 0) * (y_img < w)
+    x_img[np.invert(mask_valid)] = 0
+    y_img[np.invert(mask_valid)] = 0
+    idx1 = metadata['idx1'].reshape(-1, 1)
+    idx2 = metadata['idx2']
+    corres_idx2 = (idx2[x_img.astype(int), y_img.astype(int)]).reshape(-1, 1)
+    corres_id = np.hstack((idx1, corres_idx2))
+    corres_id[np.invert(mask_valid), :] = [-1, -1]
+    valid_corres_id = corres_id[~np.all(corres_id == [-1, -1], axis=1)]
+    # valid_corres_id = valid_corres_id[~np.all(valid_corres_id[:, 1] == 0)]
+
+    # Create two point clouds
+    pcd1 = o3d.geometry.PointCloud()
+    pcd1.points = o3d.utility.Vector3dVector(metadata['xyz1'])  # Random point cloud 1
+    pcd2 = o3d.geometry.PointCloud()
+    pcd2.points = o3d.utility.Vector3dVector(metadata['xyz2'])  # Random point cloud 2
+
+    # Assign colors to each point cloud
+    color1 = [1.0, 0.0, 0.0]  # Red color for point cloud 1
+    color2 = [0.0, 1.0, 0.0]  # Green color for point cloud 2
+
+    pcd1.paint_uniform_color(color1)  # Assign color1 to all points in pcd1
+    pcd2.paint_uniform_color(color2)  # Assign color2 to all points in pcd2
+
+    if transform:
+        # Estimate transformation using correspondences
+        transformation = o3d.pipelines.registration.TransformationEstimationPointToPoint() \
+            .compute_transformation(pcd2, pcd1, o3d.utility.Vector2iVector(valid_corres_id))
+
+        # Apply transformation to align the second point cloud to the first
+        pcd2.transform(transformation)
+
+    # Create visualization options
+    vis = o3d.visualization.Visualizer()
+    vis.create_window()
+
+    # Add the point clouds to the visualizer
+    vis.add_geometry(pcd1)
+    vis.add_geometry(pcd2)
+
+    # Create lines between corresponding points
+    lines = []
+    for i in range(valid_corres_id.shape[0] // 10):
+        line = o3d.geometry.LineSet()
+        line.points = o3d.utility.Vector3dVector(
+            [pcd1.points[valid_corres_id[i][0]], pcd2.points[valid_corres_id[i][1]]])
+        line.lines = o3d.utility.Vector2iVector([[0, 1]])
+        lines.append(line)
+        vis.add_geometry(line)
+
+    # Visualize the point clouds and lines
+    vis.run()
+
+    # Capture a screenshot of the visualizer window
+    vis.capture_screen_image(filename="runs/visualization.png")
+
+    # Save the image
+    # o3d.io.write_image("visualization.png", image)
+
+    vis.destroy_window()
