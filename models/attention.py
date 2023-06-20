@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import copy
-from models.utils import linear_position_embedding_sine
+from models.utils import linear_position_embedding_sine, PositionEmbeddingSine
 
 
 class Attention(nn.Module):
@@ -30,10 +30,14 @@ class SelfAttention(Attention):
             nn.Linear(in_channel, input_dim),
             nn.LayerNorm(input_dim)
         )
+        self.position_embedding = PositionEmbeddingSine(num_pos_feats=input_dim//2)
 
     def forward(self, corr):
+        b, h, w = corr.size()
         corr_embedded = self.self_linear_embedding(corr)  # source correlation embedding
-        corr_embedded = linear_position_embedding_sine(corr_embedded)  # source embedding with positional encoding
+        corr_embedded_pos = self.position_embedding(corr_embedded.permute(0, 2, 1).view(b, 32, 32, 128))
+        corr_embedded = corr_embedded + corr_embedded_pos.view(b, 32, 4096).permute(0, 2, 1)
+        # corr_embedded = linear_position_embedding_sine(corr_embedded)  # source embedding with positional encoding
 
         query = self.query_layer(corr_embedded)
         key = self.key_layer(corr_embedded)
@@ -59,12 +63,16 @@ class CrossAttention(Attention):
             nn.Linear(in_channel, input_dim),
             nn.LayerNorm(input_dim)
         )
+        self.position_embedding = PositionEmbeddingSine(num_pos_feats=input_dim//2)
 
     def forward(self, feature1, feature2):
         source = self.cross_linear_embedding(feature1.flatten(2).permute(0, 2, 1))
         target = self.cross_linear_embedding(feature2.flatten(2).permute(0, 2, 1))
-        source = linear_position_embedding_sine(source)
-        target = linear_position_embedding_sine(target)
+        source_pos = self.position_embedding(feature1)
+        target_pos = self.position_embedding(feature2)
+
+        source = source + source_pos.flatten(2).permute(0, 2, 1)
+        target = target + target_pos.flatten(2).permute(0, 2, 1)
 
         query = self.query_layer(source)
         key = self.key_layer(target)

@@ -3,7 +3,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from models.featurenet import FeatureExtractorNet, ContextNet
-from models.correlationnet import CorrelationNet, SleceNet
+from models.correlationnet import CorrelationNet
+from models.attention import SelfAttention, CrossAttention
+from models.update import BasicUpdateBlock
 from models.utils import correlate, warp, linear_position_embedding_sine, de_conv_layer, Correlation1D, \
     PositionEmbeddingSine, coords_grid
 
@@ -19,6 +21,17 @@ class FlowModel(nn.Module):
             self.load_encoder()
         self.patch_size = [4, 8, 8, 16, 16, 32]
         self.dilation_patch = [2, 4, 4, 8, 8, 16]
+
+    def calculate_n_parameters(self):
+        def times(shape):
+            parameters = 1
+            for layer in list(shape):
+                parameters *= layer
+            return parameters
+
+        layer_params = [times(x.size()) for x in list(self.parameters())]
+
+        return sum(layer_params)
 
     def load_encoder(self):
         if os.path.exists(self.config['fe_save_path']):
@@ -109,31 +122,22 @@ class FlowCorrelationCNN(FlowModel):
         return predict_flow
 
 
-class FlowTransformer(FlowModel):
-    def __init__(self, config, device, train=True, corr_radius=32):
+class SleceNet(FlowModel):
+    def __init__(self, config, device, train=True, embedded_dim=32, downsample_factor=8, iters=10):
         super().__init__(config, device, train)
+        self.embedded_dim = embedded_dim
+        self.downsample_factor = downsample_factor
+        self.iters = iters
         self.context_net = ContextNet()
-        self.embedded_dim = 32
-        self.downsample_factor = 8
 
-        self.slece_net = SleceNet(self.embedded_dim, self.downsample_factor)
+        self.self_attention_layer = SelfAttention(input_dim=self.embedded_dim)
+        self.cross_attention_layer = CrossAttention(input_dim=self.embedded_dim)
 
-        # self.conv_embedding = nn.Sequential(
-        #     nn.Conv2d(in_channels=4096, out_channels=self.embedded_dim,
-        #               kernel_size=(3, 3), padding=(1, 1), stride=(1, 1)),
-        #     nn.ReLU()
-        # )
-        # self.corr_radius = corr_radius
-        # corr_channels = (2 * corr_radius + 1) * 2
-
-        # self.cross_attn_x = Attention1D(self.embedded_dim,
-        #                                 y_attention=False,
-        #                                 double_cross_attn=True,
-        #                                 )
-        # self.cross_attn_y = Attention1D(self.embedded_dim,
-        #                                 y_attention=True,
-        #                                 double_cross_attn=True,
-        #                                 )
+        # Update block
+        self.update_block = BasicUpdateBlock(corr_channels=self.embedded_dim,
+                                             hidden_dim=self.embedded_dim,
+                                             context_dim=self.embedded_dim,
+                                             downsample_factor=self.downsample_factor)
 
     def initialize_flow(self, img, downsample=None):
         """ Flow is represented as difference between two coordinate grids flow = coords1 - coords0"""
@@ -164,8 +168,6 @@ class FlowTransformer(FlowModel):
         return x
 
     def forward(self, x1, x2, flow_init=None):
-        predict_flow = None
-
         x1_context = self.extract_context(x1)  # extract context from x1
         net = torch.tanh(x1_context)
         inp = torch.relu(x1_context)
@@ -173,26 +175,8 @@ class FlowTransformer(FlowModel):
         x1_fe_out, x2_fe_out = self.extract_feature(x1, x2)  # extract features from x1 and x2
 
         feature1 = x1_fe_out[5]
-        feature2 = wrapped_x2_out = x2_fe_out[5]
+        feature2 = x2_fe_out[5]
         b, dim, h, w = feature1.size()
-
-        # position encoding
-        # pos_channels = self.embedded_dim // 2
-        # pos_enc = PositionEmbeddingSine(pos_channels)
-        #
-        # position = pos_enc(feature1)  # [B, C, H, W]
-        #
-        # feature2_x, attn_x = self.cross_attn_x(feature1, feature2, position)
-        # corr_fn_y = Correlation1D(feature1, feature2_x,
-        #                           radius=self.corr_radius,
-        #                           x_correlation=False,
-        #                           )
-        #
-        # feature2_y, attn_y = self.cross_attn_y(feature1, feature2, position)
-        # corr_fn_x = Correlation1D(feature1, feature2_y,
-        #                           radius=self.corr_radius,
-        #                           x_correlation=True,
-        #                           )
 
         coords0, coords1 = self.initialize_flow(x1)
 
@@ -201,96 +185,29 @@ class FlowTransformer(FlowModel):
 
         flow_predictions = []
 
-        for i in range(20):
+        for i in range(self.iters):
             coords1 = coords1.detach()  # stop gradient
             flow = coords1 - coords0
-            # print(flow.detach().mean())
 
-            # Attention 1D
-            # corr_x = corr_fn_x(coords1)
-            # corr_y = corr_fn_y(coords1)
-            # corr = torch.cat((corr_x, corr_y), dim=1)  # [B, 2(2R+1), H, W]
-            # net, up_mask, delta_flow = self.update_block(net, inp, corr, flow, upsample=True)
-
-            # normalized full correlation
-            # corr_val = self.corr(feature1, feature2)
-            # b, h1, w1 = corr_val.size()
-            # corr_val = corr_val.permute(0, 2, 1).view(b, w1, h, w)
-            # net, up_mask, delta_flow = self.update_block(net, inp, corr_val, flow, upsample=True)
-
-            # transformer correlation
-            # corr_val = self.corr(feature1, feature2)
-            # b, h1, w1, = corr_val.size()
-            # corr_embedded = self.linear_embedding(corr_val)  # source correlation embedding
-            # corr_embedded = linear_position_embedding_sine(corr_embedded)  # source embedding with positional encoding
-            # corr_attention = self.attention_layer(corr_embedded)
-            # corr_attention = corr_attention.permute(0, 2, 1).view(b, self.embedded_dim, h, w)
-            # net, up_mask, delta_flow = self.update_block(net, inp, corr_attention, flow, upsample=True)
-            # coords1 = coords1 + delta_flow
-            # flow_up = self.learned_upflow(coords1 - coords0, up_mask)
-            # flow_predictions.append(flow_up)
-
-            # cross attention transformer
-            # feature1_embedded = self.cross_linear_embedding(feature1.flatten(2).permute(0, 2, 1))
-            # feature2_embedded = self.cross_linear_embedding(feature2.flatten(2).permute(0, 2, 1))
-
-            # feature1_embedded = linear_position_embedding_sine(feature1_embedded)
-            # feature2_embedded = linear_position_embedding_sine(feature2_embedded)
-
-            # feature2_attn = self.cross_attention_layer(feature1_embedded, feature2_embedded)
-            feature2_attn = self.slece_net.cross_attention_layer(feature1, feature2)
+            feature2_attn = self.cross_attention_layer(feature1, feature2)
             b, h1, w1, = feature2_attn.size()
             feature2_attn = feature2_attn.permute(0, 2, 1).view(b, w1, h, w)
 
             corr_val = self.corr(feature1, feature2_attn)
             b, h1, w1, = corr_val.size()
 
-            # corr_embedded = self.self_linear_embedding(corr_val)  # source correlation embedding
-            # corr_embedded = linear_position_embedding_sine(corr_embedded)  # source embedding with positional encoding
-            # corr_attention = self.self_attention_layer(corr_embedded)
-            corr_attention = self.slece_net.self_attention_layer(corr_val)
+            corr_attention = self.self_attention_layer(corr_val)
             corr_attention = corr_attention.permute(0, 2, 1).view(b, self.embedded_dim, h, w)
 
-            net, up_mask, delta_flow = self.slece_net.update_block(net, inp, corr_attention, flow, upsample=True)
-
+            net, up_mask, delta_flow = self.update_block(net, inp, corr_attention, flow, upsample=True)
             coords1 = coords1 + delta_flow
+
             flow_up = self.learned_upflow(coords1 - coords0, up_mask)
+            # x_img = flow_up[:, :, 0].reshape(-1).astype(int)
+            # y_img = flow_up[:, :, 1].reshape(-1).astype(int)
+            # mask_valid_in_2 = torch.zeros_like(flow_up)
+            # mask_in_bound = (y_img >= 0) * (y_img < h) * (x_img >= 0) * (x_img < w)
+            # mask_valid_in_2[mask_in_bound] = mask2[y_img[mask_in_bound], x_img[mask_in_bound]]
             flow_predictions.append(flow_up)
 
         return flow_predictions
-
-        # index = [5, 3, 1, 0]
-        # for idx, i in enumerate(index):
-        #     b, dim, h, w = x1_fe_out[i].size()
-        #     corr_val = self.corr(x1_fe_out[i], wrapped_x2_out)  # correlation operation between the lowest dimensions
-        #     b, h1, w1, = corr_val.size()
-        #     # corr_val = corr_val.permute(0, 2, 1)
-        #     # corr_val = corr_val.view(b, h, w, w1).permute(0, 3, 1, 2)
-        #
-        #     corr_embedded = self.linear_embedding(corr_val)  # source correlation embedding
-        #
-        #     # corr_embedded = linear_position_embedding_sine(corr_embedded)  # source embedding with positional encoding
-        #
-        #     # corr_source = self.linear_map(corr_embedded.permute(0, 2, 1))  # correlation
-        #     # corr_target = torch.roll(corr_source, shifts=1, dims=-1)
-        #
-        #     # in1_flat = x1_fe_out[i].flatten(2)
-        #     # in2_flat = wrapped_x2_out.flatten(2)
-        #     #
-        #     # # output = self.transformer(corr_source, corr_target)
-        #     # output1 = self.attention_layer(in1_flat.permute(0, 2, 1))
-        #     # output2 = self.attention_layer(in2_flat.permute(0, 2, 1))
-        #     #
-        #     # output1 = self.out(output1).permute(0, 2, 1).view(b, 1, h, w)
-        #     # output2 = self.out(output2).permute(0, 2, 1).view(b, 1, h, w)
-        #
-        #     flow = self.attention_layer(corr_embedded)
-        #     flow = self.out(flow)
-        #     flow = self.soft(flow)
-        #     # predict_flow = predict_flow.permute(0, 2, 1).view(b, dim, h, w)
-        #
-        #     if i != 0:
-        #         up_flow = self.upsample_flow(predict_flow)
-        #         wrapped_x2_out = warp(x2_fe_out[index[idx + 1]], up_flow)
-
-        # return predict_flow

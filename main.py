@@ -1,20 +1,17 @@
 import numpy as np
 import random
 from absl import app, flags
-from input_pipeline.dataset_creator import random_image_loader, DatasetCreator
+from input_pipeline.dataset_creator import DatasetCreator
 from input_pipeline.dataset import RealPairDataset, SyntheticPairDataset, SingleDataset
 from input_pipeline.dataloader import PairLoader, threaded_loader, SythPairLoader, SingleLoader
 from input_pipeline.preprocessing import RandomScale, RandomTilting, PixelNoise, RandomTranslation, RandomCrop
 import yaml
-from visualization.visualization import show_flow, flow2rgb
 from utils import common
-from models.model import FlowCorrelationCNN, FlowTransformer
+from models.model import SleceNet
 from models.featurenet import AutoEncoder
-from models.utils import loss_criterion
 import torch
-from PIL import Image
-from train import TrainAutoEncoder, TrainFlowModel
-from evaluate import evaluate
+from train import TrainAutoEncoder, TrainSleceNet
+from evaluate import evaluate, test_network
 import matplotlib.pyplot as plt
 
 RANDOM_SCALE = RandomScale(min_size=80, max_size=128, can_upscale=True)
@@ -25,7 +22,7 @@ RANDOM_RESCALE = RandomScale(64, 64, can_upscale=True)
 RANDOM_CROP = RandomCrop((64, 180))
 
 FLAGS = flags.FLAGS
-flags.DEFINE_boolean('train', True, 'Specify whether to train or evaluate a model.')
+flags.DEFINE_boolean('train', False, 'Specify whether to train or evaluate a model.')
 flags.DEFINE_boolean('visualize', False, 'Specify whether to train or evaluate a model.')
 flags.DEFINE_string('runId', "", 'Specify path to the run directory.')
 config = yaml.load(open("configs/config.yaml", "r"), Loader=yaml.FullLoader)
@@ -61,14 +58,7 @@ def main(argv):
                                        crop=RANDOM_CROP, distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
 
         net = AutoEncoder().to(device)
-
-        # for idx, input_data in enumerate(dataloader):
-        #     if idx > 1:
-        #         img = input_data.pop('img')
-        #         img = torch.unsqueeze(torch.tensor(img), 0)
-        #         pred_img, mu, logvar = net(img)
-        #         recon_loss = F.mse_loss(pred_img, img, reduction='mean')
-        #         print("loss:", recon_loss.mean())
+        test_network("ae", dataloader, net)
 
         if FLAGS.train:
             loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)
@@ -91,74 +81,30 @@ def main(argv):
                                      crop=RANDOM_CROP,
                                      distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
 
-        net = FlowTransformer(config, device)
-
         # net = FlowCorrelationCNN(config, device)
-
-        for idx, input_data in enumerate(dataloader):
-            if idx < 10:
-                img1 = input_data.pop('img1')
-                img2 = input_data.pop('img2')
-                flow = input_data.pop('aflow')
-                valid_mask = input_data.pop('mask')
-                img1 = torch.unsqueeze(torch.tensor(img1), 0)
-                img2 = torch.unsqueeze(torch.tensor(img2), 0)
-                target_flow = torch.unsqueeze(torch.tensor(flow), 0)
-                valid_mask = torch.unsqueeze(torch.tensor(valid_mask), 0)
-                pred_flow = net(img1, img2)
-                flow_loss, metrics = loss_criterion(pred_flow, target_flow, valid_mask)
-                print(flow_loss)
-                # print(metrics)
-
-                plt.imshow(flow2rgb(target_flow).transpose(1, 2, 0))
-                plt.axis('off')
-                plt.savefig(f'runs/tg_flow_{idx}.png', format='png', dpi=300, bbox_inches='tight')
-
-                plt.imshow(flow2rgb(pred_flow[-1]).transpose(1, 2, 0))
-                plt.axis('off')
-                plt.savefig(f'runs/pd_flow_{idx}.png', format='png', dpi=300, bbox_inches='tight')
-                # epe_loss = torch.norm(target_flow - pred_flow, p=2, dim=1)
-                # flow_mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
-                # epe_loss = epe_loss[~flow_mask]
-                # print("loss:", epe_loss.mean())
+        net = SleceNet(config, device).to(device)
+        # test_network("s2lece", dataloader, net)
 
         if FLAGS.train:
             loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)
             test_loader = threaded_loader(test_dataloader, batch_size=4, iscuda=iscuda, threads=1)
-            train = TrainFlowModel(net=net, dataloader=loader, test_dataloader=test_loader,
-                                   epochs=5, config=config, is_cuda=iscuda)
+            train = TrainSleceNet(net=net, dataloader=loader, test_dataloader=test_loader,
+                                  epochs=10, config=config, is_cuda=iscuda)
             train()
 
         else:
             evaluation(net, test_r_pair_dt)
-
-    if FLAGS.visualize:
-        img, mask_array = random_image_loader(config["data_dir"])
-        img_dict = dict(img=img, persp=(1, 0, 0, 0, 1, 0, 0, 0), mask=mask_array)
-        synth_pair = SyntheticPairDataset(config["data_dir"], scale=RANDOM_SCALE,
-                                          distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
-        img_scale, img_distort, metadata = synth_pair.get_pair(org_img=img_dict)
-        loader = SythPairLoader(scale=RANDOM_RESCALE, distort=None, crop=RANDOM_CROP)
-        result = loader.getitem(img_a=img_scale, img_b=img_distort, metadata=metadata)
-        show_flow(img0=np.transpose(result['img1']), img1=np.transpose(result['img2']),
-                  flow=np.transpose(result['aflow']), mask=np.transpose(result['mask']))
-        print("done")
-
-
-def train_fn(train, dataloader, test_dataloader):
-    # training
-    loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)
-    test_loader = threaded_loader(test_dataloader, batch_size=4, iscuda=iscuda, threads=1)
 
 
 def evaluation(net, dataset):
     i = random.randint(0, dataset.npairs)
     img_a, img_b, metadata = dataset.get_pair(i)
     aflow = np.float32(metadata['aflow'])
+    mask = metadata.get('flow_mask', np.ones(aflow.shape[:2], np.uint8))
     net_weights = torch.load(config['save_path'])
     net.load_state_dict(net_weights["state_dict"])
     net.eval()
-    evaluate(net, img_a, img_b, aflow)
+    evaluate(net, img_a, img_b, aflow, mask)
 
 
 if __name__ == '__main__':

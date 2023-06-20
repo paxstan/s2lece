@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import wandb
@@ -7,20 +6,9 @@ import torch.nn.functional as F
 from models.utils import loss_criterion
 
 
+torch.autograd.set_detect_anomaly(True)
 # iscuda = False
 # device = torch.device("cuda" if iscuda else "cpu")
-
-
-# def calculate_nparameters(model):
-#     def times(shape):
-#         parameters = 1
-#         for layer in list(shape):
-#             parameters *= layer
-#         return parameters
-#
-#     layer_params = [times(x.size()) for x in list(model.parameters())]
-#
-#     return sum(layer_params)
 
 
 def show_visual_progress(org_img, pred_img, title=None):
@@ -233,32 +221,62 @@ class TrainFlowModel(Train):
 
 
 class TrainSleceNet(Train):
-    def __init__(self, net, dataloader, test_dataloader, epochs=5, config=None, is_cuda=False):
+    def __init__(self, net, dataloader, test_dataloader, config, epochs=5, is_cuda=False):
         self.net = net
         self.dataloader = dataloader
         self.test_dataloader = test_dataloader
         self.epochs = epochs
         self.config = config
+        self.learning_rate = 1e-4
         wandb_config = {
-            "learning_rate": 1e-4,
+            "learning_rate": self.learning_rate,
             "architecture": "SLECE Net",
             "dataset": "Hilti exp04",
             "epochs": self.epochs,
         }
-        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-4)
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate)
         super().__init__(is_cuda=is_cuda, wandb_config=wandb_config)
 
+    def train(self):
+        self.train_slecenet()
+        print(f"\n>> Saving model to {self.config['save_path']}")
+        torch.save({'net': 'SleceNet()', 'state_dict': self.net.state_dict()}, self.config["save_path"])
+
     def train_slecenet(self):
+        train_losses = []
         for i in range(self.epochs):
             for _, inputs in enumerate(tqdm(self.dataloader)):
                 inputs = self.todevice(inputs)
                 img1 = inputs.pop('img1')
                 img2 = inputs.pop('img2')
                 target_flow = inputs.pop('aflow')
-                valid_mask = inputs.pop('mask')
+                valid_mask = inputs.pop('flow_mask')
                 pred_flow = self.net(img1, img2)
                 flow_loss, metrics = loss_criterion(pred_flow, target_flow, valid_mask)
 
                 self.optimizer.zero_grad()
                 flow_loss.backward()
                 self.optimizer.step()
+
+                train_losses.append(flow_loss.detach().item())
+                del flow_loss
+                torch.cuda.empty_cache()
+            self.train_loss = (sum(train_losses) / len(train_losses))
+            self.evaluate_slece()
+            print(f"train loss: {self.train_loss}, val loss: {self.val_loss}")
+            wandb.log({"train loss": self.train_loss, "val loss": self.val_loss})
+
+    def evaluate_slece(self):
+        losses = []
+        for idx, inputs in enumerate(self.test_dataloader):
+            with torch.no_grad():
+                inputs = self.todevice(inputs)
+                img1 = inputs.pop('img1')
+                img2 = inputs.pop('img2')
+                target_flow = inputs.pop('aflow')
+                valid_mask = inputs.pop('flow_mask')
+                pred_flow = self.net(img1, img2)
+                flow_loss, metrics = loss_criterion(pred_flow, target_flow, valid_mask)
+                losses.append(flow_loss.detach().item())
+
+        self.val_loss = (sum(losses) / len(losses))  # calculate mean

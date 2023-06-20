@@ -322,11 +322,12 @@ class PositionEmbeddingSine(nn.Module):
         return pos
 
 
-def loss_criterion(flow_preds, flow_gt, valid, gamma=0.8, max_flow=400,
-              ):
+def loss_criterion(flow_preds, flow_gt, valid, gamma=0.8, max_flow=400, train=True):
     """ Loss function defined over sequence of flow predictions
      """
 
+    if not train:
+        torch.set_grad_enabled(False)
     n_predictions = len(flow_preds)
     flow_loss = 0.0
 

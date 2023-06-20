@@ -1,7 +1,5 @@
 import torch.nn as nn
 from models.utils import predict_flow_layer, de_conv_layer
-from models.attention import SelfAttention, CrossAttention
-from models.update import BasicUpdateBlock
 
 
 class CorrelationNet(nn.Module):
@@ -22,21 +20,4 @@ class CorrelationNet(nn.Module):
         upsample_pf_layer = de_conv_layer(f"flow_up_{name}", 2, 2, max_pooled=max_pooled)
         pf_seq = nn.Sequential(pf_layer, *upsample_pf_layer)
         self.correlation.append(pf_seq)
-
-
-class SleceNet(nn.Module):
-    def __init__(self, embedded_dim, downsample_factor):
-        super(SleceNet, self).__init__()
-        self.embedded_dim = embedded_dim
-        self.downsample_factor = downsample_factor
-        self.layers = nn.ModuleList()
-
-        self.self_attention_layer = SelfAttention(input_dim=self.embedded_dim)
-        self.cross_attention_layer = CrossAttention(input_dim=self.embedded_dim)
-
-        # Update block
-        self.update_block = BasicUpdateBlock(corr_channels=self.embedded_dim,
-                                             hidden_dim=self.embedded_dim,
-                                             context_dim=self.embedded_dim,
-                                             downsample_factor=self.downsample_factor)
 

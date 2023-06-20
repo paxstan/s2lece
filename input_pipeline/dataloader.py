@@ -38,7 +38,9 @@ class PairLoader:
         img_a = self.norm(np.array(img_a))
         img_b = self.norm(np.array(img_b))
         aflow = np.float32(metadata['aflow'])
-        mask = metadata.get('mask', np.ones(aflow.shape[:2], np.uint8))
+        flow_mask = metadata.get('flow_mask', np.ones(aflow.shape[:2], np.uint8))
+        mask1 = metadata.get('mask1', np.ones(aflow.shape[:2], np.uint8))
+        mask2 = metadata.get('mask2', np.ones(aflow.shape[:2], np.uint8))
         # img_a_patch = patch_extractor(torch.unsqueeze(torch.tensor(img_a), 0))
         # img_b_patch = patch_extractor(torch.unsqueeze(torch.tensor(img_b), 0))
 
@@ -46,7 +48,9 @@ class PairLoader:
             img1=img_a,
             img2=img_b,
             aflow=aflow,
-            mask=mask
+            flow_mask=flow_mask,
+            mask1=mask1,
+            mask2=mask2
             # img1_patch=img_a_patch,
             # img2_patch=img_b_patch
         )

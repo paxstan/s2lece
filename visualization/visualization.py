@@ -195,7 +195,7 @@ def show_flow(img0, img1, flow, mask=None):
 
 
 def flow2rgb(flow_map, max_value=None):
-    flow_map_np = flow_map.detach().squeeze().numpy()
+    flow_map_np = np.floor(flow_map.detach().squeeze().numpy())
     _, h, w = flow_map_np.shape
     flow_map_np[:, (flow_map_np[0] == 0) & (flow_map_np[1] == 0)] = float('nan')
     rgb_map = np.ones((3, h, w)).astype(np.float32)
