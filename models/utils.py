@@ -322,27 +322,29 @@ class PositionEmbeddingSine(nn.Module):
         return pos
 
 
-def loss_criterion(flow_preds, flow_gt, valid, gamma=0.8, max_flow=400, train=True):
+def loss_criterion(flow_preds, flow_gt, mask, img1, img2, gamma=0.8, train=True):
     """ Loss function defined over sequence of flow predictions
      """
 
     if not train:
         torch.set_grad_enabled(False)
     n_predictions = len(flow_preds)
-    flow_loss = 0.0
+    flow_loss = torch.tensor(0.0, dtype=torch.float32).to(mask.device)
+    valid_masks = []
 
     # exlude invalid pixels and extremely large diplacements
-    mag = torch.sum(flow_gt ** 2, dim=1).sqrt()
-    valid = valid & (mag < max_flow)
+    # mag = torch.sum(flow_gt ** 2, dim=1).sqrt()
+    # valid = valid & (mag < max_flow)
 
     for i in range(n_predictions):
         i_weight = gamma ** (n_predictions - i - 1)
-        i_loss = (flow_preds[i] - flow_gt).abs()
-
-        flow_loss += i_weight * (valid[:, None] * i_loss).mean()
+        pred_flow_masked, valid_mask = flow_masker(flow_preds[i], mask, img1, img2)
+        i_loss = (pred_flow_masked - flow_gt).abs()
+        flow_loss += i_weight * i_loss.mean()
+        valid_masks.append(valid_mask)
 
     epe = torch.sum((flow_preds[-1] - flow_gt) ** 2, dim=1).sqrt()
-    epe = epe.view(-1)[valid.view(-1)]
+    epe = epe.view(-1)
 
     metrics = {
         'epe': epe.mean().item(),
@@ -351,4 +353,53 @@ def loss_criterion(flow_preds, flow_gt, valid, gamma=0.8, max_flow=400, train=Tr
         '5px': (epe > 5).float().mean().item(),
     }
 
-    return flow_loss, metrics
+    return flow_loss, metrics, valid_masks
+
+
+def flow_masker(flow, mask2, range1, range2):
+    b1, c1, h1, w1 = range1.size()
+    b2, h2, w2 = mask2.size()
+    b, c, h, w = flow.shape
+    flow = flow.permute(1, 0, 2, 3)
+    abs_flow = torch.zeros_like(flow)
+    abs_flow[0, :] = torch.arange(h).unsqueeze(1)
+    abs_flow[1, :] = torch.arange(w)
+
+    # Perform floor operation and add pred_flow
+    abs_flow = torch.floor(abs_flow + flow).int()
+
+    range1 = range1.reshape(-1)
+    range2 = range2.reshape(-1)
+    mask2 = mask2.view(b1*h2, w2)
+    # abs_flow = abs_flow.view(b1, 2, -1).int()
+    x_img = abs_flow[0].reshape(-1)
+    y_img = abs_flow[1].reshape(-1)
+    mask_valid_in_2 = torch.zeros((b1 * h1 * w1), dtype=torch.bool).to(mask2.device)
+    mask_in_bound = (x_img >= 0) * (x_img < h2) * (y_img >= 0) * (y_img < w2)
+    # y_img = y_img[mask_in_bound]
+    mask_valid_in_2[mask_in_bound] = mask2[x_img[mask_in_bound], y_img[mask_in_bound]]
+
+    # get ranges of valid image2 points
+    r2 = range2[mask_valid_in_2]
+    # get corresponding transformed ranges of image1
+    r1_t = range1[mask_valid_in_2]
+
+    # check if points in image1 are occluded in 2
+    d = (r2 - r1_t) / r1_t
+    # 20% threshold when close to each other
+    not_occluded = d > -0.2
+    # # define occlusion mask
+    occlusion_mask = torch.ones((b1* h1 * w1), dtype=torch.bool).to(mask2.device)
+    occlusion_mask[mask_valid_in_2] = not_occluded
+
+    # set mask_valid_in_2 false when occluded
+    mask_valid_in_2 = mask_valid_in_2 & occlusion_mask
+    mask_valid_in_2 = mask_valid_in_2.view(b1, h1, w1)
+
+    # mask flow according to occluded points
+    flow[0][~mask_valid_in_2] = 0
+    flow[1][~mask_valid_in_2] = 0
+
+    flow = flow.permute(1, 0, 2, 3)
+
+    return flow, mask_valid_in_2

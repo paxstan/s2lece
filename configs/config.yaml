@@ -1,7 +1,7 @@
 #general
 train_fe: False
 fe_save_path: 'runs/fe_ae_model32_e50.pt'
-save_path: 'runs/slece_model_test_e20.pt'
+save_path: 'runs/slece_model_test_e20_new_loss.pt'
 gpu:
   - -1
 

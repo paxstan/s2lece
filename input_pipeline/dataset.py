@@ -127,6 +127,10 @@ class RealPairDataset(LidarBase):
         # img1 = Image.fromarray(img1.reshape(h1, w1))
         img1 = img1.reshape(h1, w1)
         img2 = img2.reshape(h2, w2)
+        img1[img1 < 0] = 0
+        img2[img2 < 0] = 0
+        img1 = (img1 - np.min(img1)) / (np.max(img1) - np.min(img1))
+        img2 = (img2 - np.min(img2)) / (np.max(img2) - np.min(img2))
 
         meta = {'aflow': flow.transpose((2, 0, 1)), 'flow_mask': mask,
                 'mask1': mask1.astype(bool), 'mask2': mask2.astype(bool),

@@ -82,7 +82,7 @@ def main(argv):
                                      distort=(RANDOM_TILT, RANDOM_NOISE, RANDOM_TRANS))
 
         # net = FlowCorrelationCNN(config, device)
-        net = SleceNet(config, device).to(device)
+        net = SleceNet(config, device, iters=10).to(device)
         # test_network("s2lece", dataloader, net)
 
         if FLAGS.train:
@@ -93,8 +93,8 @@ def main(argv):
             train()
 
         else:
-            random_evaluation(net)
-            # evaluation(net, test_r_pair_dt)
+            # random_evaluation(net)
+            evaluation(net, test_r_pair_dt)
 
 
 def evaluation(net, dataset):

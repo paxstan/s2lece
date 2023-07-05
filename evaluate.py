@@ -3,7 +3,7 @@ from matplotlib import pyplot as plt
 from input_pipeline.dataloader import normalize_img
 import numpy as np
 import torch
-from models.utils import loss_criterion
+from models.utils import loss_criterion, flow_masker
 import torch.nn.functional as F
 
 
@@ -16,10 +16,11 @@ def evaluate(net, img1, img2, flow=None, valid_mask=None, idx=None, metadata=Non
     if not random:
         target_flow = torch.unsqueeze(torch.tensor(flow), 0)
         valid_mask_t = torch.unsqueeze(torch.tensor(valid_mask), 0)
-        flow_loss, metrics = loss_criterion(pred_flow, target_flow, valid_mask_t, train=False)
+        flow_loss, metrics, new_valid_mask = loss_criterion(pred_flow, target_flow, valid_mask_t, img1, img2,
+                                                            train=False)
         print(flow_loss)
         print(metrics)
-        compare_flow(target_flow, pred_flow[-1], valid_mask, idx, flow_loss)
+        compare_flow(target_flow, pred_flow, new_valid_mask, idx, flow_loss)
     # else:
     #     pd_flow = pred_flow[-1].detach().squeeze().numpy().transpose(1, 2, 0)
     #     plt.show(pd_flow)
@@ -42,20 +43,20 @@ def test_network(type_net, dataloader, net):
                     img1 = input_data.pop('img1')
                     img2 = input_data.pop('img2')
                     flow = input_data.pop('aflow')
-                    flow_valid_mask = input_data.pop('flow_mask')
-                    mask1 = input_data.pop('mask1')
+                    # flow_valid_mask = input_data.pop('flow_mask')
+                    # mask1 = input_data.pop('mask1')
                     mask2 = input_data.pop('mask2')
                     img1 = torch.unsqueeze(torch.tensor(img1), 0)
                     img2 = torch.unsqueeze(torch.tensor(img2), 0)
                     target_flow = torch.unsqueeze(torch.tensor(flow), 0)
-                    flow_valid_mask = torch.unsqueeze(torch.tensor(flow_valid_mask), 0)
-                    mask1 = torch.unsqueeze(torch.tensor(mask1), 0)
+                    # flow_valid_mask = torch.unsqueeze(torch.tensor(flow_valid_mask), 0)
+                    # mask1 = torch.unsqueeze(torch.tensor(mask1), 0)
                     mask2 = torch.unsqueeze(torch.tensor(mask2), 0)
                     pred_flow = net(img1, img2)
-                    flow_loss, metrics = loss_criterion(pred_flow, target_flow, flow_valid_mask)
+                    flow_loss, metrics, valid_masks = loss_criterion(pred_flow, target_flow, mask2, img1, img2)
                     print(flow_loss)
                     print(metrics)
-                    compare_flow(target_flow, pred_flow[-1], flow_valid_mask)
+                    compare_flow(target_flow, pred_flow, valid_masks, loss=flow_loss)
 
                     # pred_last_np = np.floor(pred_flow[-1].detach().squeeze().numpy()).transpose(1, 2, 0).reshape(
                     #     32 * 1024, 2)

@@ -4,9 +4,11 @@ import matplotlib.pyplot as plt
 import wandb
 import torch.nn.functional as F
 from models.utils import loss_criterion
-
+from visualization.visualization import compare_flow
 
 torch.autograd.set_detect_anomaly(True)
+
+
 # iscuda = False
 # device = torch.device("cuda" if iscuda else "cpu")
 
@@ -250,23 +252,25 @@ class TrainSleceNet(Train):
                 img1 = inputs.pop('img1')
                 img2 = inputs.pop('img2')
                 target_flow = inputs.pop('aflow')
-                valid_mask = inputs.pop('flow_mask')
+                mask2 = inputs.pop('mask2')
                 pred_flow = self.net(img1, img2)
-                flow_loss, metrics = loss_criterion(pred_flow, target_flow, valid_mask)
+                flow_loss, metrics, _ = loss_criterion(pred_flow, target_flow, mask2, img1, img2)
 
                 self.optimizer.zero_grad()
                 flow_loss.backward()
                 self.optimizer.step()
 
-                train_losses.append(flow_loss.detach().item())
+                loss = flow_loss.detach().item()
+                # print(loss)
+                train_losses.append(loss)
                 del flow_loss
                 torch.cuda.empty_cache()
             self.train_loss = (sum(train_losses) / len(train_losses))
-            self.evaluate_slece()
+            self.evaluate_slece(i_epoch=i)
             print(f"train loss: {self.train_loss}, val loss: {self.val_loss}")
             wandb.log({"train loss": self.train_loss, "val loss": self.val_loss})
 
-    def evaluate_slece(self):
+    def evaluate_slece(self, i_epoch):
         losses = []
         for idx, inputs in enumerate(self.test_dataloader):
             with torch.no_grad():
@@ -274,9 +278,11 @@ class TrainSleceNet(Train):
                 img1 = inputs.pop('img1')
                 img2 = inputs.pop('img2')
                 target_flow = inputs.pop('aflow')
-                valid_mask = inputs.pop('flow_mask')
+                mask2 = inputs.pop('mask2')
                 pred_flow = self.net(img1, img2)
-                flow_loss, metrics = loss_criterion(pred_flow, target_flow, valid_mask)
+                flow_loss, metrics, valid_masks = loss_criterion(pred_flow, target_flow, mask2, img1, img2)
+                if idx == 1:
+                    compare_flow(target_flow, pred_flow, valid_masks, loss=flow_loss, idx=i_epoch)
                 losses.append(flow_loss.detach().item())
 
         self.val_loss = (sum(losses) / len(losses))  # calculate mean

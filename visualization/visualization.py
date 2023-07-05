@@ -239,13 +239,14 @@ def visualize_correlation(corr_result, grid_size):
             axs[i, j].axis('off')
 
 
-def compare_flow(target_flow, pred_flow, valid_mask, idx=1, loss=0):
-    pred_last_np = np.floor(pred_flow[-1].detach().squeeze().numpy()).transpose(1, 2, 0).reshape(32 * 1024, 2)
-    invalid_mask = ~valid_mask.flatten()
+def compare_flow(target_flow, pred_flow, valid_masks, idx=1, loss=0):
+    pred_last_np = np.floor(pred_flow[-1][0, :, :, :]
+                            .cpu().detach().numpy()).transpose(1, 2, 0).reshape(32 * 1024, 2)
+    invalid_mask = ~valid_masks[-1][0, :, :].cpu().detach().numpy().flatten()
     pred_last_np[invalid_mask, :] = 0
 
     pred_flow_img = flow_to_color(pred_last_np.reshape(32, 1024, 2))
-    true_flow_img = flow_to_color(target_flow.detach().squeeze().numpy().transpose(1, 2, 0))
+    true_flow_img = flow_to_color(target_flow[0, :, :, :].cpu().detach().squeeze().numpy().transpose(1, 2, 0))
 
     fig, axes = plt.subplots(2, 1, sharex=True, sharey=True)
     axes[0].imshow(true_flow_img.squeeze())
@@ -258,7 +259,7 @@ def compare_flow(target_flow, pred_flow, valid_mask, idx=1, loss=0):
     plt.figtext(0.5, 0.05, f'loss: {loss}', ha='center')
 
     plt.savefig(f"runs/pred_optical_flow_{idx}.png")
-    plt.show()
+    # plt.show()
 
 
 def visualize_point_cloud(pred_flow, metadata, transform=False):

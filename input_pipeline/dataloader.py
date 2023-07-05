@@ -7,9 +7,13 @@ import torch
 from torch.utils.data import DataLoader
 from utils.common import patch_extractor
 
-img_mean = [5.4289184]
-img_std = [9.20105]
-normalize_img = tvf.Compose([tvf.ToTensor(), tvf.Normalize(mean=img_mean, std=img_std)])
+# img_mean = [5.4289184]
+# img_std = [9.20105]
+img_mean = [0.02]
+img_std = [0.05]
+
+# normalize_img = tvf.Compose([tvf.ToTensor(), tvf.Normalize(mean=img_mean, std=img_std)])
+normalize_img = tvf.Compose([tvf.ToTensor()])
 # normalize_img = tvf.Compose([tvf.ToTensor()])
 
 
