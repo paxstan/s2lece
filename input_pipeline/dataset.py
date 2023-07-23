@@ -127,65 +127,15 @@ class RealPairDataset(LidarBase):
         # img1 = Image.fromarray(img1.reshape(h1, w1))
         img1 = img1.reshape(h1, w1)
         img2 = img2.reshape(h2, w2)
-        img1[img1 < 0] = 0
-        img2[img2 < 0] = 0
-        img1 = (img1 - np.min(img1)) / (np.max(img1) - np.min(img1))
-        img2 = (img2 - np.min(img2)) / (np.max(img2) - np.min(img2))
+        # img1[img1 < 0] = 0
+        # img2[img2 < 0] = 0
+        # img1 = (img1 - np.min(img1)) / (np.max(img1) - np.min(img1))
+        # img2 = (img2 - np.min(img2)) / (np.max(img2) - np.min(img2))
 
         meta = {'aflow': flow.transpose((2, 0, 1)), 'flow_mask': mask,
                 'mask1': mask1.astype(bool), 'mask2': mask2.astype(bool),
                 'idx1': idx1, 'idx2': idx2, 'xyz1': xyz1, 'xyz2': xyz2}
         return img1, img2, meta
-
-
-class SyntheticPairDataset(LidarBase):
-    """ A synthetic generator of image pairs.
-            Given a normal image dataset, it constructs pairs using random homographies & noise.
-        """
-
-    def __init__(self, root, scale=None, distort=None, crop=False):
-        LidarBase.__init__(self, crop)
-        self.root = root
-        self.distort = distort
-        self.scale = scale
-
-    @staticmethod
-    def make_pair(img):
-        return img, img
-
-    def get_pair(self, org_img, output=('aflow')):
-        """ Procedure:
-        This function applies a series of random transformations to one original image
-        to form a synthetic image pairs with perfect ground-truth.
-        """
-        if isinstance(output, str):
-            output = output.split()
-
-        original_img = org_img
-        scaled_image = self.scale(original_img)
-        scaled_image, scaled_image2 = self.make_pair(scaled_image['img'])
-        # scaled_image = original_img
-        rand_tilt = self.distort[0](inp=dict(img=scaled_image2, persp=(1, 0, 0, 0, 1, 0, 0, 0)))
-        rand_noise = self.distort[1](inp=rand_tilt)
-        scaled_and_distorted_image = self.distort[2](inp=rand_noise)
-        # scaled_and_distorted_image = self.distort(
-        #     dict(img=scaled_image2, persp=(1, 0, 0, 0, 1, 0, 0, 0)))
-        W, H = scaled_image.size
-        trf = scaled_and_distorted_image['persp']
-
-        meta = dict()
-        meta['mask'] = org_img['mask']
-        if 'aflow' in output or 'flow' in output:
-            # compute optical flow
-            xy = np.mgrid[0:H, 0:W][::-1].reshape(2, H * W).T
-            aflow = np.float32(persp_apply(trf, xy).reshape(H, W, 2))
-            meta['flow'] = aflow - xy.reshape(H, W, 2)
-            meta['aflow'] = aflow
-
-        if 'homography' in output:
-            meta['homography'] = np.float32(trf + (1,)).reshape(3, 3)
-
-        return scaled_image, scaled_and_distorted_image['img'], meta
 
 
 class LidarData:

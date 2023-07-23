@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 from PIL import Image
-from input_pipeline.dataset import SyntheticPairDataset
 import open3d as o3d
 from utils.extract_keypoints import *
 from models.old.patchnet import *

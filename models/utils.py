@@ -370,7 +370,7 @@ def flow_masker(flow, mask2, range1, range2):
 
     range1 = range1.reshape(-1)
     range2 = range2.reshape(-1)
-    mask2 = mask2.view(b1*h2, w2)
+    mask2 = mask2.view(b1*h2, w2).bool()
     # abs_flow = abs_flow.view(b1, 2, -1).int()
     x_img = abs_flow[0].reshape(-1)
     y_img = abs_flow[1].reshape(-1)

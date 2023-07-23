@@ -258,36 +258,61 @@ def compare_flow(target_flow, pred_flow, valid_masks, idx=1, loss=0):
     # plt.text(2.5, -5, f'loss: {loss}', ha='center')
     plt.figtext(0.5, 0.05, f'loss: {loss}', ha='center')
 
-    plt.savefig(f"runs/pred_optical_flow_{idx}.png")
+    plt.savefig(f"/home/paxstan/Documents/research_project/code/runs/pred_optical_flow_{idx}.png")
     # plt.show()
 
 
-def visualize_point_cloud(pred_flow, metadata, transform=False):
+def visualize_point_cloud(pred_flow, mask_valid, metadata, transform=False):
     pred_flow = pred_flow.detach().squeeze().numpy()
     c, h, w = pred_flow.shape
+
+    # x_img = pred_flow[:, :, 0].reshape(-1).astype(int)
+    # y_img = pred_flow[:, :, 1].reshape(-1).astype(int)
+    # x_img[np.invert(mask_valid)] = 0
+    # y_img[np.invert(mask_valid)] = 0
+
+    # x_img = pred_flow[0]
+    # y_img = pred_flow[1]
+    pred_flow[0, np.invert(mask_valid)] = 0
+    pred_flow[1, np.invert(mask_valid)] = 0
+
     abs_flow = np.zeros_like(pred_flow)
     abs_flow[0, :, :] = np.arange(h)[:, np.newaxis]
     abs_flow[1, :, :] = np.arange(w)
     abs_flow = np.floor(abs_flow + pred_flow)
     abs_flow = abs_flow.transpose(1, 2, 0)
-    x_img = abs_flow[:, :, 0].reshape(-1).astype(int)
-    y_img = abs_flow[:, :, 1].reshape(-1).astype(int)
-    mask_valid = (x_img >= 0) * (x_img < h) * (y_img >= 0) * (y_img < w)
-    x_img[np.invert(mask_valid)] = 0
-    y_img[np.invert(mask_valid)] = 0
+
+    x_img = abs_flow[:, :, 0].astype(int)
+    y_img = abs_flow[:, :, 1].astype(int)
+
+    inv_x = np.where(x_img >= 32)
+    inv_y = np.where(y_img >= 1024)
+
+    x_img[inv_x] = inv_x[0]
+    y_img[inv_y] = inv_y[1]
+
+    x_img = x_img.reshape(-1)
+    y_img = y_img.reshape(-1)
+
     idx1 = metadata['idx1'].reshape(-1, 1)
     idx2 = metadata['idx2']
     corres_idx2 = (idx2[x_img.astype(int), y_img.astype(int)]).reshape(-1, 1)
     corres_id = np.hstack((idx1, corres_idx2))
-    corres_id[np.invert(mask_valid), :] = [-1, -1]
-    valid_corres_id = corres_id[~np.all(corres_id == [-1, -1], axis=1)]
-    # valid_corres_id = valid_corres_id[~np.all(valid_corres_id[:, 1] == 0)]
+    corres_id[np.invert(mask_valid.flatten()), :] = [-1, -1]
 
+    valid_index = np.where((corres_id[:, 0] != -1) & (corres_id[:, 1] != -1))[0]
+    # valid_corres_id = corres_id[~np.all(corres_id == [-1, -1], axis=1)]
+    valid_corres_id = corres_id[valid_index]
+
+    visualize_correspondence(metadata['xyz1'], metadata['xyz2'], valid_corres_id, transform)
+
+
+def visualize_correspondence(source_point, target_point, valid_corres_id, transform):
     # Create two point clouds
     pcd1 = o3d.geometry.PointCloud()
-    pcd1.points = o3d.utility.Vector3dVector(metadata['xyz1'])  # Random point cloud 1
+    pcd1.points = o3d.utility.Vector3dVector(source_point)  # Random point cloud 1
     pcd2 = o3d.geometry.PointCloud()
-    pcd2.points = o3d.utility.Vector3dVector(metadata['xyz2'])  # Random point cloud 2
+    pcd2.points = o3d.utility.Vector3dVector(target_point)  # Random point cloud 2
 
     # Assign colors to each point cloud
     color1 = [1.0, 0.0, 0.0]  # Red color for point cloud 1
@@ -298,8 +323,8 @@ def visualize_point_cloud(pred_flow, metadata, transform=False):
 
     if transform:
         # Estimate transformation using correspondences
-        transformation = o3d.pipelines.registration.TransformationEstimationPointToPoint() \
-            .compute_transformation(pcd2, pcd1, o3d.utility.Vector2iVector(valid_corres_id))
+        transformation = o3d.pipelines.registration.TransformationEstimationPointToPoint().compute_transformation(
+            pcd2, pcd1, o3d.utility.Vector2iVector(valid_corres_id[:, [1, 0]]))
 
         # Apply transformation to align the second point cloud to the first
         pcd2.transform(transformation)
@@ -320,15 +345,30 @@ def visualize_point_cloud(pred_flow, metadata, transform=False):
             [pcd1.points[valid_corres_id[i][0]], pcd2.points[valid_corres_id[i][1]]])
         line.lines = o3d.utility.Vector2iVector([[0, 1]])
         lines.append(line)
+        # Create TriangleMesh for text
+        # text_mesh = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2)
+        # text_mesh.translate(text_position)
+        # text_mesh.paint_uniform_color([1, 0, 0])
+
         vis.add_geometry(line)
+
+    # vis.register_animation_callback(register_mouse_callback)
 
     # Visualize the point clouds and lines
     vis.run()
 
     # Capture a screenshot of the visualizer window
-    vis.capture_screen_image(filename="runs/visualization.png")
+    # vis.capture_screen_image(filename="/home/paxstan/Documents/research_project/code/runs/visualization.png")
 
     # Save the image
     # o3d.io.write_image("visualization.png", image)
 
     vis.destroy_window()
+
+
+def register_mouse_callback(vis):
+    print("Picked points:", vis.get_picked_points())
+    # if vis.event.button == o3d.visualization.Button.Left:
+    #     print("Left button clicked")
+    #     if vis.has_been_picked():
+    #         print("Picked points:", vis.get_picked_points())

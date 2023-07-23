@@ -1,7 +1,8 @@
 #general
 train_fe: False
-fe_save_path: 'runs/fe_ae_model32_e50.pt'
-save_path: 'runs/slece_model_test_e20_new_loss.pt'
+fe_save_path: '/home/paxstan/Documents/research_project/code/runs/fe_run/fe_ae_model32_e50.pt'
+#save_path: 'slece_model_test_e20_new_loss.pt'
+save_path : '/home/paxstan/Documents/research_project/code/runs/run_2023-07-10T19-12-36-365114/ckpts/ckpts_11.pt'
 gpu:
   - -1
 
@@ -14,8 +15,8 @@ data_dir: 'dataset/data'
 # train_data_dir: 'dataset/data/ae_data'
 # test_data_dir: 'dataset/data/ae_val_data'
 # flow model dataset
-train_data_dir: 'dataset/data/data_exp_04'
-test_data_dir: 'dataset/data/data_exp_05'
+train_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data/data_exp_04'
+test_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data/data_exp_05'
 field_name: 'x, y, intensity'
 gen_gt: False
 
@@ -42,6 +43,7 @@ lidar_to_imu:
     - 0
 
 #hyperparameter
-learning_rate: 1e-4
+learning_rate: 2e-4
 weight_decay: 5e-4
-epoch: 5
+epoch: 50
+ckpt_interval: 10

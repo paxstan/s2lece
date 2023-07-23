@@ -5,6 +5,8 @@ import wandb
 import torch.nn.functional as F
 from models.utils import loss_criterion
 from visualization.visualization import compare_flow
+import os
+import logging
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -26,7 +28,7 @@ def show_visual_progress(org_img, pred_img, title=None):
 
     if title:
         title = title.replace(" ", "_")
-        plt.savefig('runs/progress/' + title)
+        plt.savefig('/home/paxstan/Documents/research_project/code/runs/progress/' + title)
 
 
 def train(train_fe, net, dataloader, test_dataloader, epochs=5, config=None, title=None, is_cuda=False):
@@ -37,23 +39,13 @@ def train(train_fe, net, dataloader, test_dataloader, epochs=5, config=None, tit
 
 
 class Train:
-    def __init__(self, wandb_config, is_cuda=False):
+    def __init__(self, is_cuda=False):
         self.is_cuda = is_cuda
-        self.wandb_config = wandb_config
         self.train_loss = 0
         self.val_loss = 0
 
     def __call__(self):
-        wandb.init(
-            # set the wandb project where this run will be logged
-            project="s2lece",
-
-            # track hyperparameters and run metadata
-            config=self.wandb_config
-        )
-
         self.train()
-        wandb.finish()
 
     def train(self):
         raise NotImplementedError("train() must be implemented in the child class")
@@ -69,6 +61,31 @@ class Train:
         else:
             return x.cpu()
 
+    @staticmethod
+    def save_checkpoint(state, filename):
+        torch.save(state, filename)
+        return True
+
+    @staticmethod
+    def load_checkpoint(checkpoint_dir):
+        checkpoint = None
+        # Get a list of all files in the directory
+        files = os.listdir(checkpoint_dir)
+
+        # Filter out non-checkpoint files if needed
+        checkpoint_files = [file for file in files if file.endswith('.pt')]
+
+        # Sort the checkpoint files based on modification time
+        sorted_files = sorted(checkpoint_files, key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)))
+
+        if len(sorted_files) > 0:
+            latest_checkpoint = sorted_files[-1]
+            print("Latest checkpoint file:", latest_checkpoint)
+            checkpoint = torch.load(latest_checkpoint)
+        else:
+            print("No checkpoint files found.")
+        return checkpoint
+
 
 class TrainAutoEncoder(Train):
     def __init__(self, net, dataloader, test_dataloader, epochs=5, config=None, title=None, is_cuda=False):
@@ -79,19 +96,27 @@ class TrainAutoEncoder(Train):
         self.config = config
         self.title = title
         self.learning_rate = 0.05
-        wandb_config = {
+        self.wandb_config = {
             "learning_rate": self.learning_rate,
             "architecture": "CNN-Autoencoder",
             "dataset": "Hilti exp04",
             "epochs": self.epochs,
         }
-        super().__init__(is_cuda=is_cuda, wandb_config=wandb_config)
+        super().__init__(is_cuda=is_cuda)
 
     def train(self):
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project="s2lece",
+
+            # track hyperparameters and run metadata
+            config=self.wandb_config
+        )
         self.train_autoencoder()
         print(f"\n>> Saving model to {self.config['fe_save_path']}")
         torch.save({'net': 'FeatureExtractorNet()', 'state_dict': self.net.encoder.state_dict()},
                    self.config["fe_save_path"])
+        wandb.finish()
 
     def loss_fn(self, recon_x, x, mu, logvar):
         # Reconstruction loss
@@ -147,106 +172,64 @@ class TrainAutoEncoder(Train):
         self.val_loss = sum(losses) / len(losses)
 
 
-class TrainFlowModel(Train):
-    def __init__(self, net, dataloader, test_dataloader, epochs=5, config=None, is_cuda=False):
-        self.net = net
-        self.dataloader = dataloader
-        self.test_dataloader = test_dataloader
-        self.epochs = epochs
-        self.config = config
-        wandb_config = {
-            "learning_rate": 1e-4,
-            "architecture": "FlowModel",
-            "dataset": "Hilti exp04",
-            "epochs": self.epochs,
-        }
-        self.param_groups = [{'params': self.net.bias_parameters(), 'weight_decay': 0},
-                             {'params': self.net.weight_parameters(), 'weight_decay': 4e-4}]
-        # self.optimizer = torch.optim.Adam(self.param_groups, 0.9,
-        #                                   betas=(0.9, 0.999))
-        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-4)
-
-        # scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=[100, 150, 200], gamma=0.5)
-        super().__init__(is_cuda=is_cuda, wandb_config=wandb_config)
-
-    def train(self):
-        self.train_flownet()
-        print(f"\n>> Saving model to {self.config['save_path']}")
-        torch.save({'net': 'FlowModel()', 'state_dict': self.net.state_dict()}, self.config["save_path"])
-
-    @staticmethod
-    def loss_fn(pred_flow, gt_flow):
-        loss = torch.norm(pred_flow - gt_flow, p=2, dim=1)
-        flow_mask = (gt_flow[:, 0] == 0) & (gt_flow[:, 1] == 0)
-        loss = loss[~flow_mask].mean()
-        return loss
-
-    def train_flownet(self):
-        train_losses = []
-
-        for i in range(self.epochs):
-            for _, inputs in enumerate(tqdm(self.dataloader)):
-                inputs = self.todevice(inputs)
-                img1 = inputs.pop('img1')
-                img2 = inputs.pop('img2')
-                target_flow = inputs.pop('aflow')
-
-                pred_flow = self.net(img1, img2)
-                loss = self.loss_fn(pred_flow, target_flow)
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-                train_losses.append(loss.detach().item())
-                del loss
-                torch.cuda.empty_cache()
-            self.train_loss = (sum(train_losses) / len(train_losses))
-            self.evaluate_flow_model()
-            print(f"train loss: {self.train_loss}, val loss: {self.val_loss}")
-            wandb.log({"train loss": self.train_loss, "val loss": self.val_loss})
-            # scheduler.step()
-
-    def evaluate_flow_model(self):
-        losses = []
-        for idx, inputs in enumerate(self.test_dataloader):
-            inputs = self.todevice(inputs)
-            img1 = inputs.pop('img1')
-            img2 = inputs.pop('img2')
-            target_flow = inputs.pop('aflow')
-
-            with torch.no_grad():
-                pred_flow = self.net(img1, img2)
-                loss = self.loss_fn(pred_flow, target_flow)
-                losses.append(loss.detach().item())
-
-        self.val_loss = (sum(losses) / len(losses))  # calculate mean
-
-
 class TrainSleceNet(Train):
-    def __init__(self, net, dataloader, test_dataloader, config, epochs=5, is_cuda=False):
+    def __init__(self, net, dataloader, test_dataloader, config, run_paths, is_cuda=False):
         self.net = net
         self.dataloader = dataloader
         self.test_dataloader = test_dataloader
-        self.epochs = epochs
-        self.config = config
-        self.learning_rate = 1e-4
-        wandb_config = {
+        self.epochs = config['epoch']
+        self.ckpt_interval = config['ckpt_interval']
+        self.ckpt_path = run_paths['path_ckpts_train']
+        self.save_path = os.path.join(run_paths['path_model_id'], config["save_path"])
+        self.learning_rate = float(config['learning_rate'])
+        self.wandb_config = {
             "learning_rate": self.learning_rate,
             "architecture": "SLECE Net",
             "dataset": "Hilti exp04",
             "epochs": self.epochs,
         }
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate)
-        super().__init__(is_cuda=is_cuda, wandb_config=wandb_config)
+        checkpoint = self.load_checkpoint(self.ckpt_path)
+        if checkpoint is None:
+            self.start_epoch = 0
+            logging.info("fresh model....")
+        else:
+            logging.info("checkpoint model...")
+            self.start_epoch = checkpoint["epoch"]
+            self.net.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        super().__init__(is_cuda=is_cuda)
 
     def train(self):
-        self.train_slecenet()
-        print(f"\n>> Saving model to {self.config['save_path']}")
-        torch.save({'net': 'SleceNet()', 'state_dict': self.net.state_dict()}, self.config["save_path"])
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project="s2lece",
+
+            # track hyperparameters and run metadata
+            config=self.wandb_config
+        )
+        for result in self.train_slecenet():
+            log = f"epoch: {result['epoch'] + 1}, train loss: {result['train loss']}, val loss: {result['val loss']}"
+            print(log)
+            logging.info(log)
+            wandb.log(result)
+            if result['epoch'] % self.ckpt_interval == 0:
+                logging.info(f"Saving checkpoint at epoch {result['epoch']+1}.")
+                torch.save({
+                    'epoch': result['epoch']+1,
+                    'model_state_dict': self.net.state_dict(),
+                    'optimizer_state_dict': self.optimizer.state_dict(),
+                    'loss': self.train_loss,
+                }, os.path.join(self.ckpt_path, f"ckpts_{result['epoch']+1}.pt"))
+        torch.save({'net': 'SleceNet', 'state_dict': self.net.state_dict()}, self.save_path)
+        log = f"Saved model to {self.save_path}"
+        print(log)
+        logging.info(log)
+        wandb.finish()
 
     def train_slecenet(self):
         train_losses = []
-        for i in range(self.epochs):
+        for i in range(self.start_epoch, self.epochs):
             for _, inputs in enumerate(tqdm(self.dataloader)):
                 inputs = self.todevice(inputs)
                 img1 = inputs.pop('img1')
@@ -261,14 +244,12 @@ class TrainSleceNet(Train):
                 self.optimizer.step()
 
                 loss = flow_loss.detach().item()
-                # print(loss)
                 train_losses.append(loss)
                 del flow_loss
                 torch.cuda.empty_cache()
             self.train_loss = (sum(train_losses) / len(train_losses))
             self.evaluate_slece(i_epoch=i)
-            print(f"train loss: {self.train_loss}, val loss: {self.val_loss}")
-            wandb.log({"train loss": self.train_loss, "val loss": self.val_loss})
+            yield {"train loss": self.train_loss, "val loss": self.val_loss, "epoch": i}
 
     def evaluate_slece(self, i_epoch):
         losses = []

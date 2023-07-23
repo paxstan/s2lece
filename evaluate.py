@@ -1,6 +1,6 @@
-from visualization.visualization import compare_flow, visualize_point_cloud
+from visualization.visualization import compare_flow, visualize_point_cloud, flow_to_color
 from matplotlib import pyplot as plt
-from input_pipeline.dataloader import normalize_img
+from input_pipeline.preprocessing import normalize_img
 import numpy as np
 import torch
 from models.utils import loss_criterion, flow_masker
@@ -12,19 +12,25 @@ def evaluate(net, img1, img2, flow=None, valid_mask=None, idx=None, metadata=Non
     img2 = normalize_img(np.array(img2))
     img1 = torch.unsqueeze(torch.tensor(img1), 0)
     img2 = torch.unsqueeze(torch.tensor(img2), 0)
+    mask2 = torch.unsqueeze(torch.tensor(valid_mask), 0)
     pred_flow = net(img1, img2)
     if not random:
         target_flow = torch.unsqueeze(torch.tensor(flow), 0)
-        valid_mask_t = torch.unsqueeze(torch.tensor(valid_mask), 0)
-        flow_loss, metrics, new_valid_mask = loss_criterion(pred_flow, target_flow, valid_mask_t, img1, img2,
+        flow_loss, metrics, new_valid_mask = loss_criterion(pred_flow, target_flow, mask2, img1, img2,
                                                             train=False)
         print(flow_loss)
         print(metrics)
         compare_flow(target_flow, pred_flow, new_valid_mask, idx, flow_loss)
-    # else:
-    #     pd_flow = pred_flow[-1].detach().squeeze().numpy().transpose(1, 2, 0)
-    #     plt.show(pd_flow)
-    visualize_point_cloud(pred_flow[-1], metadata)
+        visualize_point_cloud(target_flow, mask2, metadata)
+        visualize_point_cloud(pred_flow[-1], new_valid_mask, metadata)
+    else:
+        pred_flow_masked, new_valid_mask = flow_masker(pred_flow[-1], mask2, img1, img2)
+        pd_flow = pred_flow_masked.detach().squeeze().numpy()
+
+        pred_flow_img = flow_to_color(pd_flow.transpose(1, 2, 0))
+        plt.imshow(pred_flow_img)
+        new_valid_mask = new_valid_mask.detach().squeeze().numpy()
+        visualize_point_cloud(pred_flow_masked, new_valid_mask, metadata, transform=False)
 
 
 def test_network(type_net, dataloader, net):
