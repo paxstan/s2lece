@@ -1,10 +1,11 @@
 from visualization.visualization import compare_flow, visualize_point_cloud, flow_to_color
 from matplotlib import pyplot as plt
-from input_pipeline.preprocessing import normalize_img
+from input_pipeline.dataloader import normalize_img
 import numpy as np
 import torch
 from models.utils import loss_criterion, flow_masker
 import torch.nn.functional as F
+import torch.nn as nn
 
 
 def evaluate(net, img1, img2, flow=None, valid_mask=None, idx=None, metadata=None, random=False):
@@ -36,13 +37,23 @@ def evaluate(net, img1, img2, flow=None, valid_mask=None, idx=None, metadata=Non
 def test_network(type_net, dataloader, net):
     with torch.no_grad():
         if type_net == "ae":
+            max_count = len(dataloader)
             for idx, input_data in enumerate(dataloader):
-                if idx > 1:
-                    img = input_data.pop('img')
-                    img = torch.unsqueeze(torch.tensor(img), 0)
-                    pred_img, mu, logvar = net(img)
-                    recon_loss = F.mse_loss(pred_img, img, reduction='mean')
-                    print("loss:", recon_loss.mean())
+                img = input_data.pop('img')
+                mask = input_data.pop('mask')
+                weight = input_data.pop('weight')
+                img = torch.unsqueeze(torch.tensor(img), 0)
+                mask = torch.unsqueeze(torch.tensor(mask), 0)
+                weight = torch.unsqueeze(torch.tensor(weight), 0)
+                # x, skips = net["encoder"](img)
+                # pred_img = net["decoder"](x, skips)
+                pred_img = net(img)
+                recon_loss = F.mse_loss(pred_img, img, reduction='mean')
+                print("loss:", recon_loss.mean())
+
+                if idx == max_count - 1:
+                    break
+
         elif type_net == "s2lece":
             for idx, input_data in enumerate(dataloader):
                 if idx < 10:

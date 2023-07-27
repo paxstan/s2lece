@@ -17,6 +17,7 @@ def gen_run_folder(path_model_id=''):
 
     run_paths['path_logs_train'] = os.path.join(run_paths['path_model_id'], 'logs', 'run.log')
     run_paths['path_ckpts_train'] = os.path.join(run_paths['path_model_id'], 'ckpts')
+    run_paths['path_model_progress'] = os.path.join(run_paths['path_model_id'], 'progress')
 
     # Create folders
     for k, v in run_paths.items():

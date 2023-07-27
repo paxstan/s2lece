@@ -1,29 +1,53 @@
 #general
-train_fe: False
-fe_save_path: '/home/paxstan/Documents/research_project/code/runs/fe_run/fe_ae_model32_e50.pt'
+train_fe: True
+#fe_save_path: '/home/paxstan/Documents/research_project/code/runs/fe_run/fe_ae_model32_e50.pt'
 #save_path: 'slece_model_test_e20_new_loss.pt'
-save_path : '/home/paxstan/Documents/research_project/code/runs/run_2023-07-10T19-12-36-365114/ckpts/ckpts_11.pt'
+#save_path : '/home/paxstan/Documents/research_project/code/runs/run_2023-07-10T19-12-36-365114/ckpts/ckpts_11.pt'
 gpu:
   - -1
 
-#dataset
-#ros_bag_path: '../../data/hilti/rosbag/exp03_stairs/exp03_construction_stairs.bag'
-ros_bag_path: '../../data/hilti/rosbag/exp06_imu/exp06_construction_upper_level_3.bag'
+#dataset creation
+ros_bag_path: '../../data/hilti/rosbag/exp05_imu/exp05_construction_upper_level_2.bag'
 ground_truth_path : '../../data/hilti/rosbag/exp05_imu/exp_05_construction_upper_level_2_imu.txt'
-data_dir: 'dataset/data'
-# ae dataset
-# train_data_dir: 'dataset/data/ae_data'
-# test_data_dir: 'dataset/data/ae_val_data'
-# flow model dataset
-train_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data/data_exp_04'
-test_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data/data_exp_05'
-field_name: 'x, y, intensity'
-gen_gt: False
+data_dir: 'dataset/data_v6'
+generate_ground_truth: True
+
+# Auto encoder
+autoencoder:
+  # train_data_dir: 'dataset/data/ae_data'
+  # test_data_dir: 'dataset/data/ae_val_data'
+  train_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v6'
+  test_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v4'
+  save_path: '/home/paxstan/Documents/research_project/code/runs/fe_run/fe_ae_model32_e50.pt'
+  learning_rate: 2e-4
+  weight_decay: 5e-4
+  epoch: 10
+  ckpt_interval: -1
+  params:
+    in_channel: 1
+    dropout: 0.05
+    bn_d: 0.01
+    OS: 16
+
+# flow model
+s2lece:
+  train_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v6'
+  test_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v4'
+  save_path: 'slece_model_test_e20_new_loss.pt'
+  field_name: 'x, y, z, intensity'
+  learning_rate: 2e-4
+  weight_decay: 5e-4
+  epoch: 50
+  ckpt_interval: 10
+  params:
+    iters: 10
+    embedded_dim: 32
+    downsample_factor: 8
 
 #lidarparameter
 lidar_param:
   height: 32 # from hilti 2022 benchmark paper
-  width: 1024 # from hilti 2022 benchmark paper
+  width: 2000
   h_res: 0.18  # horizontal resolution (10Hz setting) - width
   v_res: 1  # vertical res - height
   v_fov: # Field of view (-ve, +ve) along vertical axis - height
@@ -41,9 +65,3 @@ lidar_to_imu:
     - -0.7071068
     - 0
     - 0
-
-#hyperparameter
-learning_rate: 2e-4
-weight_decay: 5e-4
-epoch: 50
-ckpt_interval: 10

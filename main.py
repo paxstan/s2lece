@@ -13,15 +13,19 @@ import torch
 from train import TrainAutoEncoder, TrainSleceNet
 from evaluate import evaluate, test_network
 from tune import TuneS2leceNet
+from input_pipeline.preprocessing import PixelNoise, RandomTilting
 
 FLAGS = flags.FLAGS
-flags.DEFINE_boolean('train', False, 'Specify whether to train or evaluate a model.')
+flags.DEFINE_boolean('train', True, 'Specify whether to train or evaluate a model.')
 flags.DEFINE_boolean('tune', False, 'Specify whether to train or evaluate a model.')
 flags.DEFINE_boolean('visualize', False, 'Specify whether to train or evaluate a model.')
 flags.DEFINE_string('runId', "", 'Specify path to the run directory.')
 config = yaml.load(open("configs/config.yaml", "r"), Loader=yaml.FullLoader)
 iscuda = common.torch_set_gpu(config["gpu"])
 device = torch.device("cuda" if iscuda else "cpu")
+
+# RANDOM_NOISE = PixelNoise(ampl=50)
+# RANDOM_TILT = RandomTilting(magnitude=0.025, directions="left")
 
 
 def main(argv):
@@ -30,44 +34,44 @@ def main(argv):
     # set loggers
     utils_misc.set_loggers(run_paths['path_logs_train'], logging.INFO)
 
-    # common.mkdir_for(config["save_path"])
-
     # extract and create dataset from ROS Bag
-    create_dataset = DatasetCreator(config, generate_ground_truth=config["gen_gt"])
+    create_dataset = DatasetCreator(config)
     create_dataset()
 
     print("\n>> Creating networks..")
     if config["train_fe"]:
         # dataset object for single lidar range images
-        train_single_dt = SingleDataset(root=config["train_data_dir"])
-        test_single_dt = SingleDataset(root=config["test_data_dir"])
+        train_single_dt = SingleDataset(root=config["autoencoder"]["train_data_dir"])
+        test_single_dt = SingleDataset(root=config["autoencoder"]["test_data_dir"])
 
         dataloader = SingleLoader(dataset=train_single_dt)
 
         test_dataloader = SingleLoader(dataset=test_single_dt)
 
-        net = AutoEncoder().to(device)
-        test_network("ae", dataloader, net)
+        params = config["autoencoder"]["params"]
+        net = AutoEncoder(params).to(device)
+        # test_network("ae", dataloader, net)
 
         if FLAGS.train:
             loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)
             test_loader = threaded_loader(test_dataloader, batch_size=4, iscuda=iscuda, threads=1)
             train = TrainAutoEncoder(net=net, dataloader=loader, test_dataloader=test_loader,
-                                     epochs=50, config=config, title="CAE_50", is_cuda=iscuda)
+                                     config=config, title="ResNet", is_cuda=iscuda,
+                                     max_count=len(dataloader), run_paths=run_paths)
             train()
 
         else:
             evaluation(net, None)
     else:
         # dataset object for real pair lidar data
-        train_r_pair_dt = RealPairDataset(root=config["train_data_dir"])
+        train_r_pair_dt = SingleDataset(root=config["train_data_dir"])
         test_r_pair_dt = RealPairDataset(root=config["test_data_dir"])
 
         dataloader = PairLoader(dataset=train_r_pair_dt)
         test_dataloader = PairLoader(dataset=test_r_pair_dt)
 
         net = SleceNet(config, device, iters=10).to(device)
-        # test_network("s2lece", dataloader, net)
+        test_network("s2lece", dataloader, net)
 
         if FLAGS.train:
             loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)

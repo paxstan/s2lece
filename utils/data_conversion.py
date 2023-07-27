@@ -31,6 +31,7 @@ class LidarDataConverter:
         self.proj_range = None
         self.points = None
         self.point_idx = None
+        self.initial_flow = None
         self.reset()
 
     def reset(self):
@@ -39,28 +40,23 @@ class LidarDataConverter:
         # self.intensity = np.zeros((0, 1), dtype=np.float32)  # [m ,1]: remission
 
         # projected range image - [H,W] range (-1 is no data)
-        self.proj_range = np.full((self.proj_H, self.proj_W), -1,
-                                  dtype=np.float32)
-
-        # unprojected range (list of depths for each point)
-        self.un_proj_range = np.zeros((0, 1), dtype=np.float32)
+        self.proj_range = np.full((self.proj_H, self.proj_W), -1, dtype=np.float32)
 
         # projected point cloud xyz - [H,W,3] xyz coord (-1 is no data)
-        self.proj_xyz = np.full((self.proj_H, self.proj_W, 3), -1,
-                                dtype=np.float32)
+        self.proj_xyz = np.full((self.proj_H, self.proj_W, 3), -1, dtype=np.float32)
 
         # projected index (for each pixel, what I am in the pointcloud)
         # [H,W] index (-1 is no data)
-        self.proj_idx = np.full((self.proj_H, self.proj_W), -1,
-                                dtype=np.int32)
+        self.proj_idx = np.full((self.proj_H, self.proj_W), -1, dtype=np.int32)
 
         # for each point, where it is in the range image
         self.proj_x = np.zeros((0, 1), dtype=np.int32)  # [m, 1]: x
         self.proj_y = np.zeros((0, 1), dtype=np.int32)  # [m, 1]: y
 
         # mask containing for each pixel, if it contains a point or not
-        self.proj_mask = np.zeros((self.proj_H, self.proj_W),
-                                  dtype=np.int32)  # [H,W] mask
+        self.proj_mask = np.zeros((self.proj_H, self.proj_W), dtype=np.int32)  # [H,W] mask
+
+        self.initial_flow = np.zeros((2, self.proj_H, self.proj_W))
 
     def size(self):
         """ Return the size of the point cloud. """
@@ -73,7 +69,6 @@ class LidarDataConverter:
         proj_x, proj_y, depth = project_point_cloud(self.points, height=self.proj_H, width=self.proj_W)
         self.proj_x = np.copy(proj_x)  # store a copy in orig order
         self.proj_y = np.copy(proj_y)  # store a copy in original order
-        self.un_proj_range = np.copy(depth)  # copy of depth in original order
 
         # order in decreasing depth
         indices = np.arange(depth.shape[0])
@@ -81,14 +76,16 @@ class LidarDataConverter:
         depth = depth[order]
         indices = indices[order]
         points = self.points[order]
-        proj_y = proj_y[order]
         proj_x = proj_x[order]
+        proj_y = proj_y[order]
 
         # assigning to images
-        self.proj_range[proj_y, proj_x] = depth
-        self.proj_xyz[proj_y, proj_x] = points
-        self.proj_idx[proj_y, proj_x] = indices
-        self.proj_mask = (self.proj_idx > 0).astype(np.int32)
+        self.proj_range[proj_x, proj_y] = depth
+        self.proj_xyz[proj_x, proj_y] = points
+        self.proj_idx[proj_x, proj_y] = indices
+        self.proj_mask[proj_x, proj_y] = (self.proj_idx[proj_x, proj_y] > 0).astype(np.int32)
+        self.initial_flow[0, proj_x, proj_y] = proj_x
+        self.initial_flow[1, proj_x, proj_y] = proj_y
 
     def __call__(self, org_data, num, current_pose=None, next_pose=None):
         self.points, timestamp_data = np.hsplit(np.array(org_data), [3])
@@ -102,6 +99,7 @@ class LidarDataConverter:
         np.save(os.path.join(save_dir, "range.npy"), self.proj_range)
         np.save(os.path.join(save_dir, "valid_mask.npy"), self.proj_mask)
         np.save(os.path.join(save_dir, "xyz.npy"), self.points)
+        np.save(os.path.join(save_dir, "initial_flow.npy"), self.initial_flow)
         if self.generate_gt:
             world_points = convert_to_world_frame(
                 self.points, timestamp_data, current_pose, next_pose, self.rotation_l2i, self.translation_l2i)
@@ -172,21 +170,21 @@ def project_point_cloud(points, height=32, width=1024):
     pitch = np.arcsin(z_lidar / depth)
 
     # get projections in image coords
-    proj_x = 0.5 * (yaw / np.pi + 1.0)  # in [0.0, 1.0]
-    proj_y = 1.0 - (pitch + abs(fov_down)) / fov  # in [0.0, 1.0]
+    proj_x = 1.0 - (pitch + abs(fov_down)) / fov  # in [0.0, 1.0]
+    proj_y = 0.5 * (yaw / np.pi + 1.0)  # in [0.0, 1.0]
 
     # scale to image size using angular resolution
-    proj_x *= width  # in [0.0, W]
-    proj_y *= height  # in [0.0, H]
+    proj_x *= height  # in [0.0, H]
+    proj_y *= width  # in [0.0, W]
 
     # round and clamp for use as index
     proj_x = np.floor(proj_x)
-    proj_x = np.minimum(width - 1, proj_x)
-    proj_x = np.maximum(0, proj_x).astype(np.int32)  # in [0,W-1]
+    proj_x = np.minimum(height - 1, proj_x)
+    proj_x = np.maximum(0, proj_x).astype(np.int32)  # in [0,H-1]
 
     proj_y = np.floor(proj_y)
-    proj_y = np.minimum(height - 1, proj_y)
-    proj_y = np.maximum(0, proj_y).astype(np.int32)  # in [0,H-1]
+    proj_y = np.minimum(width - 1, proj_y)
+    proj_y = np.maximum(0, proj_y).astype(np.int32)  # in [0,W-1]
 
     return proj_x, proj_y, depth
 
@@ -214,3 +212,99 @@ def pcd_transformation(pcd, rotation, translation):
     pcd.rotate(pcd.get_rotation_matrix_from_quaternion(rotation=rotation))
     pcd.translate(translation=translation)
     return pcd
+
+
+def get_pixel_match(source, target):
+    # h1, w1 = shape1
+    # h2, w2 = mask2.shape
+
+    source_frame = np.load(os.path.join(source, 'world_frame.npy'))
+    target_frame = np.load(os.path.join(target, 'world_frame.npy'))
+
+    source_idx = np.load(os.path.join(source, 'idx.npy'))
+    target_idx = np.load(os.path.join(target, 'idx.npy'))
+
+    source_mask = np.load(os.path.join(source, 'valid_mask.npy'))
+    target_mask = np.load(os.path.join(target, 'valid_mask.npy'))
+
+    source_x_y = map_points_xy(source_idx, source_mask, source_frame.shape[0])
+    target_x_y = map_points_xy(target_idx, target_mask, target_frame.shape[0])
+
+    distances, corres = perform_kdtree(source_frame, target_frame)
+
+    counts = np.bincount(corres)
+    indices_unique = np.where(counts < 1)[0]
+    indices_unique = indices_unique[indices_unique<source_frame.shape[0]]
+
+    neighbour_mask = distances <= 0.05
+    neighbour_mask[indices_unique] = True
+
+    flow = build_flow(source_x_y, target_x_y, corres, neighbour_mask)
+
+
+    # mask_valid_in_2 = np.zeros(h1 * w1, dtype=bool)
+    # mask_in_bound = (y_img >= 0) * (y_img < h2) * (x_img >= 0) * (x_img < w2)
+    # mask_valid_in_2[mask_in_bound] = mask2[y_img[mask_in_bound], x_img[mask_in_bound]]
+
+    # range1 = np.full((h1, w1), 9999999, dtype=np.float32)
+    # range2 = np.full((h2, w2), -9999999, dtype=np.float32)
+    #
+    # range1[proj_y1, proj_x1] = depth1
+    # range2[proj_y2, proj_x2] = depth2
+    # get ranges of valid image2 points
+    # r2 = range2.reshape(-1)[mask_valid_in_2]
+    # get corresponding transformed ranges of image1
+    # r1_t = range1.reshape(-1)[mask_valid_in_2]
+
+    # check if points in image1 are occluded in 2
+    # d = (r2 - r1_t) / r1_t
+    # 20% threshold when close to each other
+    # not_occluded = d > -0.2
+    # # define occlusion mask
+    # occlusion_mask = np.ones((h1 * w1), dtype=bool)
+    # occlusion_mask[mask_valid_in_2] = not_occluded
+
+    # set mask_valid_in_2 false when occluded
+    # mask_valid_in_2 = np.logical_and(mask_valid_in_2, occlusion_mask)
+    # mask_valid_in_2 = mask_valid_in_2.reshape(h1, w1)
+    #
+    # # mask flow according to occluded points
+    # flow[:, :, 0][np.invert(mask_valid_in_2)] = 0
+    # flow[:, :, 1][np.invert(mask_valid_in_2)] = 0
+
+    return flow
+
+
+def map_points_xy(idx, valid_mask, no_of_points):
+    source_x_y = np.full((no_of_points, 2), np.nan)
+    valid_idx = np.argwhere(np.invert(valid_mask))
+    valid_val = idx[valid_idx[:, 0], valid_idx[:, 1]]
+    sort_id = np.argsort(valid_val)
+    source_x_y[valid_val[sort_id]] = valid_idx[sort_id]
+    return source_x_y
+
+
+def build_flow(source_idx, target_idx, indices, n_mask):
+    s_idx = source_idx
+    # s_flow = np.zeros((2, 32, 2000))
+    # s_flow[0, x, y] = x
+    # s_flow[1, x, y] = y
+
+    t_idx = target_idx[indices]
+
+    diff_x = t_idx[:, 0] - s_idx[:, 0]
+    diff_y = t_idx[:, 1] - s_idx[:, 1]
+
+    mask = (np.isnan(diff_x)) | (np.isnan(diff_y)) | np.invert(n_mask)
+
+    s_idx = s_idx[np.invert(mask)].astype(int)
+    diff_x = diff_x[np.invert(mask)].astype(int)
+    diff_y = diff_y[np.invert(mask)].astype(int)
+    x = s_idx[:, 0]
+    y = s_idx[:, 1]
+
+    flow = np.zeros((2, 32, 2000))
+    flow[0, x, y] = diff_x
+    flow[1, x, y] = diff_y
+
+    return flow

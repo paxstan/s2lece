@@ -262,8 +262,28 @@ def compare_flow(target_flow, pred_flow, valid_masks, idx=1, loss=0):
     # plt.show()
 
 
+def show_visual_progress(org_img, pred_img, path="", title=None, loss=0):
+    if title:
+        plt.title(title)
+
+    org_img = org_img.detach().cpu().numpy()[0, 0, :, :].reshape(32, 2000)
+    pred_img = pred_img.detach().cpu().numpy()[0, 0, :, :].reshape(32, 2000)
+
+    fig, axes = plt.subplots(2, 1, sharex=True, sharey=True)
+    axes[0].imshow(org_img)
+    axes[0].set_title("original image")
+    axes[1].imshow(pred_img)
+    axes[0].set_title("predicted image")
+
+    plt.figtext(0.5, 0.05, f'loss: {loss}', ha='center')
+
+    if title:
+        title = title.replace(" ", "_")
+        plt.savefig(f"{path}/{title}")
+
+
 def visualize_point_cloud(pred_flow, mask_valid, metadata, transform=False):
-    pred_flow = pred_flow.detach().squeeze().numpy()
+    # pred_flow = pred_flow.detach().squeeze().numpy()
     c, h, w = pred_flow.shape
 
     # x_img = pred_flow[:, :, 0].reshape(-1).astype(int)
