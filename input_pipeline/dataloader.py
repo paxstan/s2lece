@@ -4,7 +4,7 @@ from PIL import Image
 from utils.transform_tools import persp_apply
 import torch
 import torchvision.transforms as tvf
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from input_pipeline.preprocessing import preprocess_range_image
 
 
@@ -28,7 +28,7 @@ normalize_img = tvf.Compose([tvf.ToTensor(), ToFloat32()])
 class PairLoader:
     def __init__(self, dataset):
         assert hasattr(dataset, 'npairs')
-        assert hasattr(dataset, 'get_item')
+        assert hasattr(dataset, 'get_pair')
         self.dataset = dataset
 
     def __len__(self):
@@ -40,16 +40,17 @@ class PairLoader:
         img_a, img_b, metadata = self.dataset.get_pair(i)
         img_a, edge_weight_a = preprocess_range_image(img_a)
         img_b, edge_weight_a = preprocess_range_image(img_b)
-        aflow = np.float32(metadata['aflow'])
-        flow_mask = metadata.get('flow_mask', np.ones(aflow.shape[:2], np.uint8))
-        mask1 = metadata.get('mask1', np.ones(aflow.shape[:2], np.uint8))
-        mask2 = metadata.get('mask2', np.ones(aflow.shape[:2], np.uint8))
+        flow = np.float32(metadata['flow'])
+        initial_flow = np.float32(metadata['initial_flow'])
+        # flow_mask = metadata.get('flow_mask', np.ones(aflow.shape[:2], np.uint8))
+        mask1 = metadata.get('mask1', np.ones(flow.shape[:2], np.uint8))
+        mask2 = metadata.get('mask2', np.ones(flow.shape[:2], np.uint8))
 
         result = dict(
             img1=img_a,
             img2=img_b,
-            aflow=aflow,
-            flow_mask=flow_mask,
+            flow=flow,
+            initial_flow=initial_flow,
             mask1=mask1,
             mask2=mask2
         )

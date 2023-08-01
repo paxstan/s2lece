@@ -2,6 +2,7 @@ import torch
 from tqdm import tqdm
 import wandb
 import torch.nn.functional as F
+import torch.optim.lr_scheduler as toptim
 from models.utils import loss_criterion
 from visualization.visualization import compare_flow, show_visual_progress
 import os
@@ -11,7 +12,7 @@ torch.autograd.set_detect_anomaly(True)
 
 
 class Train:
-    def __init__(self, net, config, run_paths, model_type, is_cuda=False, enable_wandb=False):
+    def __init__(self, net, config, run_paths, model_type, is_cuda=False):
         self.model_type = model_type
         self.net = net
         self.ckpt_interval = config[model_type]['ckpt_interval']
@@ -30,7 +31,7 @@ class Train:
             "dataset": "Hilti exp04",
             "epochs": self.epochs,
         }
-        self.enable_wandb = enable_wandb
+        self.enable_wandb = config[model_type]['enable_wandb']
 
     def __call__(self):
         self.train()
@@ -46,7 +47,7 @@ class Train:
             )
         for result in self.train_epoch():
             log = f"epoch: {result['epoch'] + 1}, train loss: {result['train loss']}, val loss: {result['val loss']}"
-            print(log)
+            # print(log)
             logging.info(log)
             if self.enable_wandb:
                 wandb.log(result)
@@ -60,12 +61,12 @@ class Train:
                 }, os.path.join(self.ckpt_path, f"ckpts_{result['epoch'] + 1}.pt"))
 
         if self.model_type == "autoencoder":
-            torch.save({'net': 'FeatureExtractorNet()', 'state_dict': self.net.encoder.state_dict()}, self.save_path)
+            torch.save({'net': 'FeatureExtractorNet', 'state_dict': self.net.state_dict()}, self.save_path)
         else:
             torch.save({'net': 'SleceNet', 'state_dict': self.net.state_dict()}, self.save_path)
 
         log = f"Saved model to {self.save_path}"
-        print(log)
+        # print(log)
         logging.info(log)
         if self.enable_wandb:
             wandb.finish()
@@ -103,26 +104,45 @@ class Train:
 
         if len(sorted_files) > 0:
             latest_checkpoint = sorted_files[-1]
-            print("Latest checkpoint file:", latest_checkpoint)
+            logging.info(f"Latest checkpoint file:{latest_checkpoint}")
             checkpoint = torch.load(latest_checkpoint)
         else:
-            print("No checkpoint files found.")
+            logging.info("No checkpoint files found.")
         return checkpoint
 
 
 class TrainAutoEncoder(Train):
-    def __init__(self, net, dataloader, test_dataloader, run_paths, config=None, title=None, is_cuda=False,
+    def __init__(self, net, train_loader, val_loader, run_paths, config=None, title=None, is_cuda=False,
                  max_count=0):
         super().__init__(net=net, config=config, run_paths=run_paths, is_cuda=is_cuda, model_type="autoencoder")
-        self.dataloader = dataloader
-        self.test_dataloader = test_dataloader
+        self.dataloader = train_loader
+        self.val_loader = val_loader
+        self.train_dicts = []
+        self.train_dicts.append({'params': self.net.encoder.parameters()})
+        self.train_dicts.append({'params': self.net.decoder.parameters()})
+        self.train_dicts.append({'params': self.net.head.parameters()})
+        self.optimizer = torch.optim.SGD(self.train_dicts,
+                                         lr=config["autoencoder"]["learning_rate"],
+                                         momentum=config["autoencoder"]["momentum"],
+                                         weight_decay=config["autoencoder"]["weight_decay"])
+        # Use warmup learning rate
+        # post decay and step sizes come in epochs and we want it in steps
+        steps_per_epoch = len(self.dataloader)
+        up_steps = int(config["autoencoder"]["wup_epochs"] * steps_per_epoch)
+        final_decay = config["autoencoder"]["lr_decay"] ** (1 / steps_per_epoch)
+        self.scheduler = warmupLR(optimizer=self.optimizer,
+                                  lr=config["autoencoder"]["learning_rate"],
+                                  warmup_steps=up_steps,
+                                  momentum=config["autoencoder"]["momentum"],
+                                  decay=final_decay)
         checkpoint = self.load_checkpoint(self.ckpt_path)
+        self.start_epoch = 0
         if checkpoint is None:
-            self.start_epoch = 0
             logging.info("fresh model....")
         else:
             logging.info("checkpoint model...")
-            self.start_epoch = checkpoint["epoch"]
+            if checkpoint["epoch"] < self.epochs:
+                self.start_epoch = checkpoint["epoch"]
             self.net.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
@@ -154,17 +174,18 @@ class TrainAutoEncoder(Train):
                 train_losses.append(loss.detach().item())
                 del loss, pred
                 torch.cuda.empty_cache()
-                if idx == self.max_count - 1:
-                    break
+                # if idx == self.max_count - 1:
+                #     break
             if self.title:
                 image_title = f'{self.title} - Epoch {i}'
             self.train_loss = (sum(train_losses) / len(train_losses))
             self.evaluate_autoencoder(title=image_title)
             yield {"train loss": self.train_loss, "val loss": self.val_loss, "epoch": i}
+            self.scheduler.step()
 
     def evaluate_autoencoder(self, title, progress_view=True):
         losses = []
-        for idx, batch in enumerate(self.test_dataloader):
+        for idx, batch in enumerate(self.val_loader):
             with torch.no_grad():
                 batch = self.todevice(batch)
                 img = batch.pop('img')
@@ -229,10 +250,13 @@ class TrainSleceNet(Train):
                 inputs = self.todevice(inputs)
                 img1 = inputs.pop('img1')
                 img2 = inputs.pop('img2')
-                target_flow = inputs.pop('aflow')
-                mask2 = inputs.pop('mask2')
+                target_flow = inputs.pop('flow')
+                initial_flow = inputs.pop('initial_flow')
+                mask = inputs.pop('mask')
                 pred_flow = self.net(img1, img2)
-                flow_loss, metrics, _ = loss_criterion(pred_flow, target_flow, mask2, img1, img2)
+                pred_flow[:, 0] = pred_flow[:, 0] * mask
+                pred_flow[:, 1] = pred_flow[:, 1] * mask
+                flow_loss, metrics = loss_criterion(initial_flow, pred_flow, target_flow, train=False)
 
                 self.optimizer.zero_grad()
                 flow_loss.backward()
@@ -262,3 +286,50 @@ class TrainSleceNet(Train):
                 losses.append(flow_loss.detach().item())
 
         self.val_loss = (sum(losses) / len(losses))  # calculate mean
+
+
+class warmupLR(toptim.LRScheduler):
+  """ Warmup learning rate scheduler.
+      Initially, increases the learning rate from 0 to the final value, in a
+      certain number of steps. After this number of steps, each step decreases
+      LR exponentially.
+  """
+
+  def __init__(self, optimizer, lr, warmup_steps, momentum, decay):
+    # cyclic params
+    self.optimizer = optimizer
+    self.lr = lr
+    self.warmup_steps = warmup_steps
+    self.momentum = momentum
+    self.decay = decay
+
+    # cap to one
+    if self.warmup_steps < 1:
+      self.warmup_steps = 1
+
+    # cyclic lr
+    self.initial_scheduler = toptim.CyclicLR(self.optimizer,
+                                             base_lr=0,
+                                             max_lr=self.lr,
+                                             step_size_up=self.warmup_steps,
+                                             step_size_down=self.warmup_steps,
+                                             cycle_momentum=False,
+                                             base_momentum=self.momentum,
+                                             max_momentum=self.momentum)
+
+    # our params
+    self.last_epoch = -1  # fix for pytorch 1.1 and below
+    self.finished = False  # am i done
+    super().__init__(optimizer)
+
+  def get_lr(self):
+    return [self.lr * (self.decay ** self.last_epoch) for lr in self.base_lrs]
+
+  def step(self, epoch=None):
+    if self.finished or self.initial_scheduler.last_epoch >= self.warmup_steps:
+      if not self.finished:
+        self.base_lrs = [self.lr for lr in self.base_lrs]
+        self.finished = True
+      return super(warmupLR, self).step(epoch)
+    else:
+      return self.initial_scheduler.step(epoch)

@@ -3,7 +3,7 @@ from matplotlib import pyplot as plt
 from input_pipeline.dataloader import normalize_img
 import numpy as np
 import torch
-from models.utils import loss_criterion, flow_masker
+from models.utils import loss_criterion
 import torch.nn.functional as F
 import torch.nn as nn
 
@@ -59,21 +59,26 @@ def test_network(type_net, dataloader, net):
                 if idx < 10:
                     img1 = input_data.pop('img1')
                     img2 = input_data.pop('img2')
-                    flow = input_data.pop('aflow')
-                    # flow_valid_mask = input_data.pop('flow_mask')
-                    # mask1 = input_data.pop('mask1')
+                    flow = input_data.pop('flow')
+                    initial_flow = input_data.pop('initial_flow')
+                    mask = input_data.pop('mask')
+                    mask1 = input_data.pop('mask1')
                     mask2 = input_data.pop('mask2')
-                    img1 = torch.unsqueeze(torch.tensor(img1), 0)
-                    img2 = torch.unsqueeze(torch.tensor(img2), 0)
+                    img1 = torch.unsqueeze(torch.tensor(img1), 0).unsqueeze(0).to(torch.float32)
+                    img2 = torch.unsqueeze(torch.tensor(img2), 0).unsqueeze(0).to(torch.float32)
+                    mask = torch.unsqueeze(torch.tensor(mask), 0)
                     target_flow = torch.unsqueeze(torch.tensor(flow), 0)
+                    initial_flow = torch.unsqueeze(torch.tensor(initial_flow), 0)
                     # flow_valid_mask = torch.unsqueeze(torch.tensor(flow_valid_mask), 0)
                     # mask1 = torch.unsqueeze(torch.tensor(mask1), 0)
-                    mask2 = torch.unsqueeze(torch.tensor(mask2), 0)
+                    # mask2 = torch.unsqueeze(torch.tensor(mask2), 0)
                     pred_flow = net(img1, img2)
-                    flow_loss, metrics, valid_masks = loss_criterion(pred_flow, target_flow, mask2, img1, img2)
+                    pred_flow[:, 0] = pred_flow[:, 0] * mask
+                    pred_flow[:, 1] = pred_flow[:, 1] * mask
+                    flow_loss, metrics, = loss_criterion(initial_flow, pred_flow, target_flow, train=False)
                     print(flow_loss)
                     print(metrics)
-                    compare_flow(target_flow, pred_flow, valid_masks, loss=flow_loss)
+                    compare_flow(target_flow, pred_flow, loss=flow_loss)
 
                     # pred_last_np = np.floor(pred_flow[-1].detach().squeeze().numpy()).transpose(1, 2, 0).reshape(
                     #     32 * 1024, 2)

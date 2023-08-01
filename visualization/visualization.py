@@ -239,13 +239,13 @@ def visualize_correlation(corr_result, grid_size):
             axs[i, j].axis('off')
 
 
-def compare_flow(target_flow, pred_flow, valid_masks, idx=1, loss=0):
-    pred_last_np = np.floor(pred_flow[-1][0, :, :, :]
-                            .cpu().detach().numpy()).transpose(1, 2, 0).reshape(32 * 1024, 2)
-    invalid_mask = ~valid_masks[-1][0, :, :].cpu().detach().numpy().flatten()
-    pred_last_np[invalid_mask, :] = 0
+def compare_flow(target_flow, pred_flow, idx=1, loss=0):
+    pred_last_np = np.floor(pred_flow[0, :, :, :]
+                            .cpu().detach().numpy()).transpose(1, 2, 0).reshape(32 * 2000, 2)
+    # invalid_mask = ~valid_masks[-1][0, :, :].cpu().detach().numpy().flatten()
+    # pred_last_np[invalid_mask, :] = 0
 
-    pred_flow_img = flow_to_color(pred_last_np.reshape(32, 1024, 2))
+    pred_flow_img = flow_to_color(pred_last_np.reshape(32, 2000, 2))
     true_flow_img = flow_to_color(target_flow[0, :, :, :].cpu().detach().squeeze().numpy().transpose(1, 2, 0))
 
     fig, axes = plt.subplots(2, 1, sharex=True, sharey=True)
@@ -258,8 +258,8 @@ def compare_flow(target_flow, pred_flow, valid_masks, idx=1, loss=0):
     # plt.text(2.5, -5, f'loss: {loss}', ha='center')
     plt.figtext(0.5, 0.05, f'loss: {loss}', ha='center')
 
-    plt.savefig(f"/home/paxstan/Documents/research_project/code/runs/pred_optical_flow_{idx}.png")
-    # plt.show()
+    # plt.savefig(f"/home/paxstan/Documents/research_project/code/runs/pred_optical_flow_{idx}.png")
+    plt.show()
 
 
 def show_visual_progress(org_img, pred_img, path="", title=None, loss=0):
@@ -346,8 +346,17 @@ def visualize_correspondence(source_point, target_point, valid_corres_id, transf
         transformation = o3d.pipelines.registration.TransformationEstimationPointToPoint().compute_transformation(
             pcd2, pcd1, o3d.utility.Vector2iVector(valid_corres_id[:, [1, 0]]))
 
+        print("Apply point-to-point ICP")
+        reg_p2l = o3d.pipelines.registration.registration_icp(
+            pcd2, pcd1, 0.001, transformation,
+            o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+            o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=2000))
+        # print(reg_p2l)
+        # print("Transformation is:")
+        # print(reg_p2l.transformation)
+
         # Apply transformation to align the second point cloud to the first
-        pcd2.transform(transformation)
+        pcd2.transform(reg_p2l.transformation)
 
     # Create visualization options
     vis = o3d.visualization.Visualizer()
@@ -359,7 +368,7 @@ def visualize_correspondence(source_point, target_point, valid_corres_id, transf
 
     # Create lines between corresponding points
     lines = []
-    for i in range(valid_corres_id.shape[0] // 10):
+    for i in range(valid_corres_id.shape[0]):
         line = o3d.geometry.LineSet()
         line.points = o3d.utility.Vector3dVector(
             [pcd1.points[valid_corres_id[i][0]], pcd2.points[valid_corres_id[i][1]]])

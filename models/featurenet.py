@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch
 from collections import OrderedDict
 from models.utils import conv_layer, de_conv_layer
 
@@ -38,7 +39,7 @@ class FeatureExtractorNet(nn.Module):
         self.bn_d = params["bn_d"]
         self.OS = params["OS"]
 
-        self.strides = [2, 2, 2, 2]
+        self.strides = [2, 2, 2, 1, 2]
         # check current stride
         current_os = 1
         for s in self.strides:
@@ -63,7 +64,11 @@ class FeatureExtractorNet(nn.Module):
             print("Strides: ", self.strides)
 
         # generate layers depending on darknet type
-        self.blocks = [1, 2, 8, 4]
+        model_blocks = {
+            21: [1, 1, 2, 2, 1],
+            53: [1, 2, 8, 8, 4],
+        }
+        self.blocks = model_blocks[params["model"]]
 
         # input layer
         self.conv1 = nn.Conv2d(self.in_channel, 2, kernel_size=3,
@@ -78,10 +83,10 @@ class FeatureExtractorNet(nn.Module):
                                          stride=self.strides[1], bn_d=self.bn_d)
         self.enc3 = self._make_enc_layer(BasicBlock, [8, 16], self.blocks[2],
                                          stride=self.strides[2], bn_d=self.bn_d)
-        # self.enc4 = self._make_enc_layer(BasicBlock, [16, 32], self.blocks[3],
-        #                                  stride=self.strides[3], bn_d=self.bn_d)
-        self.enc5 = self._make_enc_layer(BasicBlock, [16, 32], self.blocks[3],
+        self.enc4 = self._make_enc_layer(BasicBlock, [16, 16], self.blocks[3],
                                          stride=self.strides[3], bn_d=self.bn_d)
+        self.enc5 = self._make_enc_layer(BasicBlock, [16, 32], self.blocks[4],
+                                         stride=self.strides[4], bn_d=self.bn_d)
 
         # for a bit of fun
         self.dropout = nn.Dropout2d(self.drop_prob)
@@ -139,8 +144,8 @@ class FeatureExtractorNet(nn.Module):
         x, skips, os = self.run_layer(x, self.dropout, skips, os)
         x, skips, os = self.run_layer(x, self.enc3, skips, os)
         x, skips, os = self.run_layer(x, self.dropout, skips, os)
-        # x, skips, os = self.run_layer(x, self.enc4, skips, os)
-        # x, skips, os = self.run_layer(x, self.dropout, skips, os)
+        x, skips, os = self.run_layer(x, self.enc4, skips, os)
+        x, skips, os = self.run_layer(x, self.dropout, skips, os)
         x, skips, os = self.run_layer(x, self.enc5, skips, os)
         x, skips, os = self.run_layer(x, self.dropout, skips, os)
 
@@ -155,7 +160,7 @@ class Decoder(nn.Module):
         self.drop_prob = params["dropout"]
         self.bn_d = params["bn_d"]
 
-        self.strides = [2, 2, 2, 2]
+        self.strides = [2, 1, 2, 2, 2]
         # check current stride
         current_os = 1
         for s in self.strides:
@@ -177,18 +182,18 @@ class Decoder(nn.Module):
                                          [32, 16],
                                          bn_d=self.bn_d,
                                          stride=self.strides[0])
-        # self.dec4 = self._make_dec_layer(BasicBlock, [32, 16], bn_d=self.bn_d,
-        #                                  stride=self.strides[1])
-        self.dec3 = self._make_dec_layer(BasicBlock, [16, 8], bn_d=self.bn_d,
+        self.dec4 = self._make_dec_layer(BasicBlock, [16, 16], bn_d=self.bn_d,
                                          stride=self.strides[1])
-        self.dec2 = self._make_dec_layer(BasicBlock, [8, 4], bn_d=self.bn_d,
+        self.dec3 = self._make_dec_layer(BasicBlock, [16, 8], bn_d=self.bn_d,
                                          stride=self.strides[2])
-        self.dec1 = self._make_dec_layer(BasicBlock, [4, 2], bn_d=self.bn_d,
+        self.dec2 = self._make_dec_layer(BasicBlock, [8, 4], bn_d=self.bn_d,
                                          stride=self.strides[3])
+        self.dec1 = self._make_dec_layer(BasicBlock, [4, 2], bn_d=self.bn_d,
+                                         stride=self.strides[4])
 
         # layer list to execute with skips
-        # self.layers = [self.dec5, self.dec4, self.dec3, self.dec2, self.dec1]
-        self.layers = [self.dec5, self.dec3, self.dec2, self.dec1]
+        self.layers = [self.dec5, self.dec4, self.dec3, self.dec2, self.dec1]
+        # self.layers = [self.dec5, self.dec3, self.dec2, self.dec1]
 
         # for a bit of fun
         self.dropout = nn.Dropout2d(self.drop_prob)
@@ -230,7 +235,7 @@ class Decoder(nn.Module):
 
         # run layers
         x, skips, os = self.run_layer(x, self.dec5, skips, os)
-        # x, skips, os = self.run_layer(x, self.dec4, skips, os)
+        x, skips, os = self.run_layer(x, self.dec4, skips, os)
         x, skips, os = self.run_layer(x, self.dec3, skips, os)
         x, skips, os = self.run_layer(x, self.dec2, skips, os)
         x, skips, os = self.run_layer(x, self.dec1, skips, os)
@@ -264,8 +269,21 @@ class ContextNet(nn.Module):
     def __init__(self, in_channel=1):
         super(ContextNet, self).__init__()
         self.encoder = nn.ModuleList()
-        self.encoder.append(conv_layer("fe_l1", in_channel, 2, instance_norm=True))  # [1, 16, 16, 512]
-        self.encoder.append(conv_layer("fe_l2", 2, 4, max_pooling=False, instance_norm=True))  # [1, 32, 16, 512]
+        self.encoder.append(conv_layer("fe_l1", in_channel, 2, max_pooling=False, instance_norm=True))  # [1, 16, 16, 512]
+        self.encoder.append(conv_layer("fe_l2", 2, 4, instance_norm=True))  # [1, 32, 16, 512]
         self.encoder.append(conv_layer("fe_l3", 4, 8, instance_norm=True))  # [1, 64, 8, 256]
-        self.encoder.append(conv_layer("fe_l4", 8, 16, max_pooling=False, instance_norm=True))  # [1, 128, 8, 256]
+        self.encoder.append(conv_layer("fe_l4", 8, 16, instance_norm=True))  # [1, 128, 8, 256]
         self.encoder.append(conv_layer("fe_l5", 16, 32, instance_norm=True))  # [1, 256, 4, 128]
+
+    def forward(self, x):
+        i = 1
+        net = {}
+        inp = {}
+        for layers in self.encoder:
+            x = layers(x)
+            x_net = torch.tanh(x)
+            x_inp = torch.relu(x)
+            net[i] = x_net
+            inp[i] = x_inp
+            i *= 2
+        return net, inp

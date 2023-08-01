@@ -214,10 +214,7 @@ def pcd_transformation(pcd, rotation, translation):
     return pcd
 
 
-def get_pixel_match(source, target):
-    # h1, w1 = shape1
-    # h2, w2 = mask2.shape
-
+def get_pixel_match(source, target, nearest_distance):
     source_frame = np.load(os.path.join(source, 'world_frame.npy'))
     target_frame = np.load(os.path.join(target, 'world_frame.npy'))
 
@@ -232,45 +229,27 @@ def get_pixel_match(source, target):
 
     distances, corres = perform_kdtree(source_frame, target_frame)
 
-    counts = np.bincount(corres)
-    indices_unique = np.where(counts < 1)[0]
-    indices_unique = indices_unique[indices_unique<source_frame.shape[0]]
+    count = np.bincount(corres)
 
-    neighbour_mask = distances <= 0.05
-    neighbour_mask[indices_unique] = True
+    true_val = np.where(count == 1)[0]
+    true_indices = [np.column_stack(np.where(corres == i)).ravel().tolist() for i in true_val]
+    true_indices = np.array(true_indices)
+    unique_mask = np.zeros_like(corres)
+    unique_mask[true_indices] = 1
 
-    flow = build_flow(source_x_y, target_x_y, corres, neighbour_mask)
+    non_unique = np.where(count > 1)[0]
+    non_unique_pair = [[i, np.column_stack(np.where(corres == i)).ravel().tolist()] for i in non_unique]
+    for i, val in enumerate(non_unique_pair):
+        min_distance_id = distances[val[1]].argmin()
+        unique_mask[val[1][min_distance_id]] = 1
 
+    unique_mask = unique_mask.astype(bool)
 
-    # mask_valid_in_2 = np.zeros(h1 * w1, dtype=bool)
-    # mask_in_bound = (y_img >= 0) * (y_img < h2) * (x_img >= 0) * (x_img < w2)
-    # mask_valid_in_2[mask_in_bound] = mask2[y_img[mask_in_bound], x_img[mask_in_bound]]
+    neighbour_mask = distances <= nearest_distance
 
-    # range1 = np.full((h1, w1), 9999999, dtype=np.float32)
-    # range2 = np.full((h2, w2), -9999999, dtype=np.float32)
-    #
-    # range1[proj_y1, proj_x1] = depth1
-    # range2[proj_y2, proj_x2] = depth2
-    # get ranges of valid image2 points
-    # r2 = range2.reshape(-1)[mask_valid_in_2]
-    # get corresponding transformed ranges of image1
-    # r1_t = range1.reshape(-1)[mask_valid_in_2]
+    mask = neighbour_mask * unique_mask
 
-    # check if points in image1 are occluded in 2
-    # d = (r2 - r1_t) / r1_t
-    # 20% threshold when close to each other
-    # not_occluded = d > -0.2
-    # # define occlusion mask
-    # occlusion_mask = np.ones((h1 * w1), dtype=bool)
-    # occlusion_mask[mask_valid_in_2] = not_occluded
-
-    # set mask_valid_in_2 false when occluded
-    # mask_valid_in_2 = np.logical_and(mask_valid_in_2, occlusion_mask)
-    # mask_valid_in_2 = mask_valid_in_2.reshape(h1, w1)
-    #
-    # # mask flow according to occluded points
-    # flow[:, :, 0][np.invert(mask_valid_in_2)] = 0
-    # flow[:, :, 1][np.invert(mask_valid_in_2)] = 0
+    flow = build_flow(source_x_y, target_x_y, corres, mask)
 
     return flow
 

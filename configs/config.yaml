@@ -1,33 +1,80 @@
 #general
-train_fe: True
-#fe_save_path: '/home/paxstan/Documents/research_project/code/runs/fe_run/fe_ae_model32_e50.pt'
-#save_path: 'slece_model_test_e20_new_loss.pt'
-#save_path : '/home/paxstan/Documents/research_project/code/runs/run_2023-07-10T19-12-36-365114/ckpts/ckpts_11.pt'
+train_fe: False
 gpu:
   - -1
+dataset_choice: 4
+datasets:
+  - 'exp01'
+  - 'exp02'
+  - 'exp03'
+  - 'exp04'
+  - 'exp05'
+  - 'exp06'
 
 #dataset creation
-ros_bag_path: '../../data/hilti/rosbag/exp05_imu/exp05_construction_upper_level_2.bag'
-ground_truth_path : '../../data/hilti/rosbag/exp05_imu/exp_05_construction_upper_level_2_imu.txt'
-data_dir: 'dataset/data_v6'
-generate_ground_truth: True
+dataset:
+  exp05:
+    path: '../../data/hilti/rosbag/exp05_imu'
+    ros_bag: 'exp05_construction_upper_level_2.bag'
+    ground_truth : 'exp_05_construction_upper_level_2_imu.txt'
+    data_dir: '../dataset/exp05'
+    generate_ground_truth: True
+  exp04:
+    path: '../../data/hilti/rosbag/exp04_imu'
+    ros_bag: 'exp04_construction_upper_level.bag'
+    ground_truth: 'exp_04_construction_upper_level_imu.txt'
+    data_dir: '../dataset/exp04'
+    generate_ground_truth: True
+  exp06:
+    path: '../../data/hilti/rosbag/exp06_imu'
+    ros_bag: 'exp06_construction_upper_level_3.bag'
+    ground_truth: 'exp_06_construction_upper_level_3_imu.txt'
+    data_dir: '../dataset/exp06'
+    generate_ground_truth: True
+  exp03:
+    path: '../../data/hilti/rosbag/exp03_stairs'
+    ros_bag: 'exp03_construction_stairs.bag'
+    ground_truth: ''
+    data_dir: '../dataset/exp03'
+    generate_ground_truth: False
+  exp02:
+    path: '../../data/hilti/rosbag/exp02_multilevel'
+    ros_bag: 'exp02_construction_multilevel.bag'
+    ground_truth: ''
+    data_dir: '../dataset/exp02'
+    generate_ground_truth: False
+  exp01:
+    path: '../../data/hilti/rosbag/exp01_construction_ground_level'
+    ros_bag: 'exp01_construction_ground_level.bag'
+    ground_truth: ''
+    data_dir: '../dataset/exp01'
+    generate_ground_truth: False
+
+correspondence:
+  nearest_neighbor: 0.2
+  pair_distance:
+    - 0.01
+    - 1
 
 # Auto encoder
 autoencoder:
-  # train_data_dir: 'dataset/data/ae_data'
-  # test_data_dir: 'dataset/data/ae_val_data'
   train_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v6'
   test_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v4'
-  save_path: '/home/paxstan/Documents/research_project/code/runs/fe_run/fe_ae_model32_e50.pt'
-  learning_rate: 2e-4
-  weight_decay: 5e-4
-  epoch: 10
-  ckpt_interval: -1
+  save_path: '/home/paxstan/Documents/research_project/code/runs/fe_run/fe_ae_darknet21.pt'
+  learning_rate: 0.01
+  weight_decay: 0.0001
+  momentum: 0.9          # sgd momentum
+  epoch: 50
+  wup_epochs: 1
+  lr_decay: 0.995        # learning rate decay per epoch after initial cycle (from min lr)
+  ckpt_interval: 10
+  enable_wandb: False
   params:
     in_channel: 1
-    dropout: 0.05
+    dropout: 0.01
     bn_d: 0.01
     OS: 16
+    model: 21
 
 # flow model
 s2lece:
@@ -39,10 +86,11 @@ s2lece:
   weight_decay: 5e-4
   epoch: 50
   ckpt_interval: 10
+  enable_wandb: False
   params:
-    iters: 10
+    iters: 5
     embedded_dim: 32
-    downsample_factor: 8
+    downsample_factor: 16
 
 #lidarparameter
 lidar_param:

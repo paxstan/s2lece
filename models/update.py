@@ -20,7 +20,7 @@ class FlowHead(nn.Module):
 
 
 class SepConvGRU(nn.Module):
-    def __init__(self, hidden_dim=128, input_dim=192 + 128, kernel_size=5):
+    def __init__(self, hidden_dim, input_dim=192 + 128, kernel_size=5):
         padding = (kernel_size - 1) // 2
 
         super(SepConvGRU, self).__init__()
@@ -72,12 +72,12 @@ class BasicMotionEncoder(nn.Module):
 
 
 class BasicUpdateBlock(nn.Module):
-    def __init__(self, corr_channels=324, hidden_dim=128, context_dim=128, downsample_factor=8, learn_upsample=True,
+    def __init__(self, corr_channels, hidden_dim, context_dim, downsample_factor=8, learn_upsample=True,
                  **kwargs):
         super(BasicUpdateBlock, self).__init__()
         self.encoder = BasicMotionEncoder(corr_channels=corr_channels)
-        # self.gru = SepConvGRU(hidden_dim=hidden_dim, input_dim=context_dim + hidden_dim)
-        self.gru = SepConvGRU(hidden_dim=hidden_dim, input_dim=160)
+        self.gru = SepConvGRU(hidden_dim=hidden_dim, input_dim=128 + context_dim)
+        # self.gru = SepConvGRU(hidden_dim=hidden_dim, input_dim=160)
         self.flow_head = FlowHead(hidden_dim, hidden_dim=256)
         self.learn_upsample = learn_upsample
         if learn_upsample:

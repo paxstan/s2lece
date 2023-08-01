@@ -4,30 +4,32 @@ import numpy as np
 from utils.transform_tools import persp_apply
 from utils.data_conversion import project_point_cloud
 from scipy.spatial.transform import Rotation as R
-from scipy.signal import correlate2d
+from input_pipeline.preprocessing import preprocess_range_image
 from PIL import Image
+from torch.utils.data import Dataset
 
 
-class Dataset(object):
-    """ Base class for a dataset. To be overloaded.
-    """
-    root = ''
-    img_dir = ''
-    nimg = 0
-
-    def __len__(self):
-        return self.nimg
-
-    def __repr__(self):
-        res = 'Dataset: %s\n' % self.__class__.__name__
-        res += '  %d images' % self.nimg
-        res += '\n  root: %s...\n' % self.root
-        return res
+# class Dataset(object):
+#     """ Base class for a dataset. To be overloaded.
+#     """
+#     root = ''
+#     img_dir = ''
+#     nimg = 0
+#
+#     def __len__(self):
+#         return self.nimg
+#
+#     def __repr__(self):
+#         res = 'Dataset: %s\n' % self.__class__.__name__
+#         res += '  %d images' % self.nimg
+#         res += '\n  root: %s...\n' % self.root
+#         return res
 
 
 class LidarBase(Dataset):
-    def __init__(self):
+    def __init__(self, root):
         Dataset.__init__(self)
+        self.root = root
 
     def get_image(self, img_idx):
         folder_path = os.path.join(self.root, img_idx)
@@ -52,7 +54,7 @@ class LidarBase(Dataset):
 
 class RealPairDataset(LidarBase):
     def __init__(self, root):
-        LidarBase.__init__(self)
+        LidarBase.__init__(self, root)
         self.root = root
         self.gt_pose = np.load(f'{root}/ground_truth_pose.npy') if os.path.exists(f'{root}/ground_truth_pose.npy') \
             else None
@@ -78,7 +80,7 @@ class RealPairDataset(LidarBase):
         m[0:3, 0:3] = rot.as_matrix()
         return m
 
-    def get_pair(self, idx):
+    def __getitem__(self, idx):
         """ returns (img1, img2, `metadata`)
         """
         source = str(self.arr_corres[idx][0])
@@ -89,9 +91,6 @@ class RealPairDataset(LidarBase):
         img2 = self.load_np_file(os.path.join(self.root, target, 'range.npy'))
         mask1 = np.load(os.path.join(self.root, source, 'valid_mask.npy'))
         mask2 = np.load(os.path.join(self.root, target, 'valid_mask.npy'))
-        flow = self.load_np_file(os.path.join(self.root, "correspondence", corres_dir, 'flow.npy'))
-        # mask_valid_in_2 = self.load_np_file(os.path.join(self.root,
-        #                                                  "correspondence", corres_dir, 'mask_valid_2.npy'))
 
         idx1 = self.load_np_file(os.path.join(self.root, source, 'idx.npy'))
         idx2 = self.load_np_file(os.path.join(self.root, target, 'idx.npy'))
@@ -99,12 +98,16 @@ class RealPairDataset(LidarBase):
         xyz1 = self.load_np_file(os.path.join(self.root, source, 'xyz.npy'))
         xyz2 = self.load_np_file(os.path.join(self.root, target, 'xyz.npy'))
 
+        flow = self.load_np_file(os.path.join(self.root, "correspondence", corres_dir, 'flow.npy'))
+        initial_flow = self.load_np_file(os.path.join(self.root, source, 'initial_flow.npy'))
+        # mask_valid_in_2 = self.load_np_file(os.path.join(self.root,
+        #                                                  "correspondence", corres_dir, 'mask_valid_2.npy'))
+
         img1 = img1 * mask1
         img1[img1 == -0.0] = 0.0
 
         img2 = img2 * mask2
         img2[img2 == -0.0] = 0.0
-
 
         # h1, w1 = img1.shape
         # h2, w2 = img2.shape
@@ -135,10 +138,33 @@ class RealPairDataset(LidarBase):
         # img1 = (img1 - np.min(img1)) / (np.max(img1) - np.min(img1))
         # img2 = (img2 - np.min(img2)) / (np.max(img2) - np.min(img2))
 
-        meta = {'aflow': flow.transpose((2, 0, 1)), 'flow_mask': mask,
-                'mask1': mask1.astype(bool), 'mask2': mask2.astype(bool),
-                'idx1': idx1, 'idx2': idx2, 'xyz1': xyz1, 'xyz2': xyz2}
-        return img1, img2, meta
+        # meta = {'flow': flow.transpose((2, 0, 1)), 'initial_flow': initial_flow.transpose((2, 0, 1)),
+        #         'mask1': mask1.astype(bool), 'mask2': mask2.astype(bool),
+        #         'idx1': idx1, 'idx2': idx2, 'xyz1': xyz1, 'xyz2': xyz2}
+
+        # img_a, edge_weight_a = preprocess_range_image(img1)
+        # img_b, edge_weight_a = preprocess_range_image(img2)
+        # flow = np.float32(metadata['flow'])
+        # initial_flow = np.float32(metadata['initial_flow'])
+        # flow_mask = metadata.get('flow_mask', np.ones(aflow.shape[:2], np.uint8))
+        # mask1 = metadata.get('mask1', np.ones(flow.shape[:2], np.uint8))
+        # mask2 = metadata.get('mask2', np.ones(flow.shape[:2], np.uint8))
+
+        # img1 = img1.astype(float)
+        # img2 = img2.astype(float)
+        # flow = flow.transpose((2, 0, 1))
+        # initial_flow = initial_flow.transpose((2, 0, 1))
+
+        result = dict(
+            img1=img1,
+            img2=img2,
+            flow=flow,
+            initial_flow=initial_flow,
+            mask1=mask1,
+            mask2=mask2,
+            mask=mask
+        )
+        return result
 
 
 class LidarData:
@@ -153,7 +179,7 @@ class LidarData:
 
 class SingleDataset(LidarBase):
     def __init__(self, root):
-        LidarBase.__init__(self)
+        LidarBase.__init__(self, root)
         self.root = root
         self.npairs = self.get_count()
 
@@ -172,6 +198,3 @@ class SingleDataset(LidarBase):
         img[img == -0.0] = 0.0
 
         return img, mask
-
-
-

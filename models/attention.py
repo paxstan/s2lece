@@ -23,47 +23,52 @@ class Attention(nn.Module):
 
 
 class SelfAttention(Attention):
-    def __init__(self, input_dim, in_channel=4096):
-        super(SelfAttention, self).__init__(input_dim)
-
+    def __init__(self, embed_dim, in_channel=4000, num_heads=4):
+        super(SelfAttention, self).__init__(embed_dim)
         self.self_linear_embedding = nn.Sequential(
-            nn.Linear(in_channel, input_dim),
-            nn.LayerNorm(input_dim)
+            nn.Linear(in_channel, embed_dim),
+            nn.LayerNorm(embed_dim)
         )
-        self.position_embedding = PositionEmbeddingSine(num_pos_feats=input_dim//2)
+        self.position_embedding = PositionEmbeddingSine(num_pos_feats=embed_dim//2)
 
-    def forward(self, corr):
+        self.MHSA = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
+
+    def forward(self, in_shape, corr):
         b, h, w = corr.size()
+        b2, c2, h2, w2 = in_shape
         corr_embedded = self.self_linear_embedding(corr)  # source correlation embedding
-        corr_embedded_pos = self.position_embedding(corr_embedded.permute(0, 2, 1).view(b, 32, 32, 128))
-        corr_embedded = corr_embedded + corr_embedded_pos.view(b, 32, 4096).permute(0, 2, 1)
+        corr_embedded_pos = self.position_embedding(corr_embedded.permute(0, 2, 1).view(b, c2, h2, w2))
+        corr_embedded = corr_embedded + corr_embedded_pos.view(b, c2, w).permute(0, 2, 1)
         # corr_embedded = linear_position_embedding_sine(corr_embedded)  # source embedding with positional encoding
 
         query = self.query_layer(corr_embedded)
         key = self.key_layer(corr_embedded)
         value = self.value_layer(corr_embedded)
 
+        attn_output, attn_output_weights = self.MHSA(query, key, value)
+
         # calculate similarity between query and key using scaled dot product
-        attention_scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale
-
-        # softmax normalization
-        attention_weights = self.softmax(attention_scores)
-
-        # Apply attention weights to value vectors (convex combination)
-        attention_values = torch.matmul(attention_weights, value)
+        # attention_scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale
+        #
+        # # softmax normalization
+        # attention_weights = self.softmax(attention_scores)
+        #
+        # # Apply attention weights to value vectors (convex combination)
+        # attention_values = torch.matmul(attn_output_weights, value)
 
         # Return the attention values
-        return attention_values
+        return attn_output
 
 
 class CrossAttention(Attention):
-    def __init__(self, input_dim, in_channel=32):
-        super(CrossAttention, self).__init__(input_dim)
+    def __init__(self, embed_dim, in_channel=32, num_heads=4):
+        super(CrossAttention, self).__init__(embed_dim)
         self.cross_linear_embedding = nn.Sequential(
-            nn.Linear(in_channel, input_dim),
-            nn.LayerNorm(input_dim)
+            nn.Linear(in_channel, embed_dim),
+            nn.LayerNorm(embed_dim)
         )
-        self.position_embedding = PositionEmbeddingSine(num_pos_feats=input_dim//2)
+        self.position_embedding = PositionEmbeddingSine(num_pos_feats=embed_dim//2)
+        self.MHCA = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
 
     def forward(self, feature1, feature2):
         source = self.cross_linear_embedding(feature1.flatten(2).permute(0, 2, 1))
@@ -78,17 +83,19 @@ class CrossAttention(Attention):
         key = self.key_layer(target)
         value = self.value_layer(target)
 
-        # calculate similarity between query and key using scaled dot product
-        attention_scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale
+        attn_output, attn_output_weights = self.MHCA(query, key, value)
 
-        # softmax normalization
-        attention_weights = self.softmax(attention_scores)
+        # calculate similarity between query and key using scaled dot product
+        # attention_scores = torch.matmul(query, key.transpose(-2, -1)) / self.scale
+        #
+        # # softmax normalization
+        # attention_weights = self.softmax(attention_scores)
 
         # Apply attention weights to value vectors (convex combination)
-        attention_values = torch.matmul(attention_weights, value)
+        # attention_values = torch.matmul(attn_output_weights, value)
 
         # Return the attention values
-        return attention_values
+        return attn_output
 
 
 class Attention1D(nn.Module):
