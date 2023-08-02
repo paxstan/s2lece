@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import torch
 from spatial_correlation_sampler import spatial_correlation_sample
 import math
+import os
 
 
 def coords_grid(batch, ht, wd, normalize=False):
@@ -322,46 +323,154 @@ class PositionEmbeddingSine(nn.Module):
         return pos
 
 
-def loss_criterion(initial_flow, flow_preds, flow_gt, gamma=0.8, train=True):
+def ae_loss_criterion(pred_img, img, mask):
+    squared_diff = (pred_img - img) ** 2
+    squared_mask = squared_diff * mask
+    loss = torch.sum(squared_mask) / torch.sum(mask)
+    return loss
+
+
+def s2lece_loss_criterion(flow_pred, flow_gt, train=True):
+    # ae = AE()
     """ Loss function defined over sequence of flow predictions
      """
 
     if not train:
         torch.set_grad_enabled(False)
-    n_predictions = len(flow_preds)
+
     flow_loss = torch.tensor(0.0, dtype=torch.float32).to(flow_gt.device)
-    # valid_masks = []
-
-    # exlude invalid pixels and extremely large diplacements
-    # mag = torch.sum(flow_gt ** 2, dim=1).sqrt()
-    # valid = valid & (mag < max_flow)
-
-    # for i in range(n_predictions):
+    # gt_flow = torch.floor(initial_flow + flow_gt).to(torch.int32)
+    # valid_flow = ((gt_flow[:, 0] >= 0) & (gt_flow[:, 0] < 32)) & ((gt_flow[:, 1] >= 0) & (gt_flow[:, 1] < 2000))
     #
-    #     i_weight = gamma ** (n_predictions - i - 1)
-    #     # pred_flow_masked, valid_mask = flow_masker(flow_preds[i], mask, img1, img2)
-    #     i_loss = (flow_preds[i] - flow_gt).abs()
-    #     flow_loss += i_weight * i_loss.mean()
-    #     # valid_masks.append(valid_mask)
+    # valid_flow = valid_flow[:, None]
 
-    pred_flow = torch.floor(initial_flow + flow_preds).to(torch.int32)
-    gt_flow = torch.floor(initial_flow + flow_gt).to(torch.int32)
-    valid_flow = (gt_flow >= 0)
-    gt_flow = flow_gt[valid_flow]
-    pred_flow = flow_preds[valid_flow]
+    # valid_flow *= mask
 
-    epe = torch.sum((pred_flow - gt_flow) ** 2).sqrt()
-    epe = epe.view(-1)
-    flow_loss = epe.mean().item()
+    # i_loss = (flow_pred - flow_gt).abs()
+    # flow_loss += (valid_flow * i_loss).mean()
+
+    mask = (flow_gt != 0).float()
+
+    # squared_diff = (flow_pred - flow_gt) ** 2
+    #
+    # masked_square_diff = squared_diff * mask
+    #
+    # mse_loss = torch.sum(masked_square_diff) / torch.sum(mask)
+
+    rmse_loss = rmse_loss_fn(flow_pred, flow_gt, mask)
+
+    aae_loss = average_angular_error_fn(flow_pred, flow_gt, mask)
+
+    div_curl_loss = div_curl_loss_fn(flow_pred, flow_gt, mask, div_weight=1, curl_weight=1)
+
+    # gt_flow = flow_gt * valid_flow
+    # pred_flow = flow_pred * valid_flow
+
+    flow_loss += (
+            torch.tensor(rmse_loss.clone().detach(), requires_grad=True if train else False) +
+            torch.tensor(aae_loss.clone().detach(), requires_grad=True if train else False) +
+            torch.tensor(div_curl_loss.clone().detach(), requires_grad=True if train else False))
+
+    # print(flow_loss)
+
+    diff = (flow_pred - flow_gt).abs()
+
+    masked_diff = diff * mask
+
+    mae_loss = torch.sum(masked_diff) / torch.sum(mask)
+
+    epe = torch.sum((flow_pred * mask - flow_gt * mask) ** 2, dim=1).sqrt()
+    # epe = epe * mask
 
     metrics = {
-        'epe': epe.mean().item(),
-        '1px': (epe > 1).float().mean().item(),
-        '3px': (epe > 3).float().mean().item(),
-        '5px': (epe > 5).float().mean().item(),
+        'mae': mae_loss,
+        'epe': torch.sum(epe) / torch.sum(mask),
+        '1px': torch.sum((epe > 1).float()) / torch.sum(mask),
+        '3px': torch.sum((epe > 3).float()) / torch.sum(mask),
+        '5px': torch.sum((epe > 5).float()) / torch.sum(mask)
     }
 
     return flow_loss, metrics
+
+
+def compute_divergence(flow):
+    """Compute the divergence of the flow field."""
+    # Compute gradients along the spatial dimensions (H and W) of the flow field
+    dU_dx = flow[:, 0].unsqueeze(1).contiguous()
+    dV_dy = flow[:, 1].unsqueeze(1).contiguous()
+
+    # Compute the divergence as the sum of the gradients
+    divergence = dU_dx + dV_dy
+    return divergence
+
+
+def compute_curl(flow):
+    """Compute the curl of the flow field."""
+    # Compute gradients along the spatial dimensions (H and W) of the flow field
+    dU_dy = flow[:, 0].unsqueeze(1).contiguous()
+    dV_dx = flow[:, 1].unsqueeze(1).contiguous()
+
+    # Compute the curl as the difference between the gradients
+    curl = dV_dx - dU_dy
+    return curl
+
+
+def rmse_loss_fn(pred_flow, gt_flow, mask):
+    squared_diff = (pred_flow - gt_flow) ** 2
+
+    rse_loss = torch.sqrt(squared_diff)
+
+    masked_rse_loss = rse_loss * mask
+
+    rmse_loss = torch.sum(masked_rse_loss) / torch.sum(mask)
+
+    # rmse_loss = torch.sqrt(mse_loss)
+
+    return rmse_loss
+
+
+def average_angular_error_fn(pred_flow, gt_flow, mask):
+    """Calculate the Average Angular Error (AAE) between predicted and ground truth flows."""
+
+    y_pred = pred_flow * mask
+    y_true = gt_flow * mask
+    dotP = torch.sum(y_pred * y_true, dim=1) + 1
+    Norm_pred = torch.sqrt(torch.sum(y_pred * y_pred, dim=1) + 1)
+    Norm_true = torch.sqrt(torch.sum(y_true * y_true, dim=1) + 1)
+    # ae = 180 / math.pi * torch.acos(dotP / (Norm_pred * Norm_true))
+    ae = 180 / math.pi * torch.acos(torch.clamp((dotP / (Norm_pred * Norm_true)), -1.0 + 1e-8, 1.0 - 1e-8))
+
+    # ae_mean = torch.sum(ae) / torch.sum(mask)
+    # return ae.mean(1).mean(1)
+    mean = ae.mean()
+
+    if torch.isnan(mean):
+        print("nan!!!!")
+        mean = torch.tensor(0.0)
+    return mean
+
+
+def div_curl_loss_fn(pred_flow, gt_flow, mask, div_weight=0.8, curl_weight=0.2):
+    div = compute_divergence(gt_flow)
+    curl = compute_curl(gt_flow)
+
+    div_hat = compute_divergence(pred_flow)
+    curl_hat = compute_curl(pred_flow)
+
+    div_norm = torch.norm(div * mask - div_hat * mask)
+    curl_norm = torch.norm(curl * mask - curl_hat * mask)
+
+    div_curl = (div_weight * div_norm) + (curl_weight * curl_norm)
+
+    div_curl_loss = torch.sum(div_curl) / torch.sum(mask)
+
+    # divergence_loss = torch.mean((div_hat * mask - div * mask).abs())
+    # curl_loss = torch.mean((curl_hat * mask - curl * mask).abs())
+    #
+    # # Combine the divergence and curl losses
+    # total_loss = divergence_loss + curl_loss
+
+    return div_curl_loss
 
 
 def abs_flow_builder(initial_flow, pred_flow, idx1, idx2):
@@ -429,3 +538,15 @@ def abs_flow_builder(initial_flow, pred_flow, idx1, idx2):
     flow = flow.permute(1, 0, 2, 3)
 
     return flow, mask_valid_in_2
+
+
+def load_encoder(feature_net, ae_path):
+    if os.path.exists(ae_path):
+        fe_net_weights = torch.load(ae_path)
+        feature_net.load_state_dict(fe_net_weights["state_dict"])
+        for params in feature_net.parameters():
+            params.requires_grad = False
+        print(f"AE Model loaded from {ae_path}")
+    else:
+        print(f"AE Model is not in the path {ae_path}")
+    return feature_net.encoder

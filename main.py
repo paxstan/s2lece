@@ -1,21 +1,21 @@
 import numpy as np
+import os
 import logging
 import random
 from absl import app, flags
 from input_pipeline.dataset_creator import DatasetCreator
 from input_pipeline.dataset import RealPairDataset, SingleDataset
-from input_pipeline.dataloader import PairLoader, threaded_loader, SingleLoader
+from input_pipeline.dataloader import threaded_loader
 import yaml
-from utils import common, utils_params, utils_misc
+from utils import utils_params, utils_misc
 from models.model import SleceNet
 from models.featurenet import AutoEncoder
 import torch
 from train import TrainAutoEncoder, TrainSleceNet
 from evaluate import evaluate, test_network
 from tune import TuneS2leceNet
-from sklearn.model_selection import train_test_split
-from torch.utils.data import random_split
-from input_pipeline.preprocessing import PixelNoise, RandomTilting
+from torch.utils.data import random_split, ConcatDataset
+from models.utils import load_encoder
 
 FLAGS = flags.FLAGS
 flags.DEFINE_boolean('train', True, 'Specify whether to train or evaluate a model.')
@@ -23,7 +23,7 @@ flags.DEFINE_boolean('tune', False, 'Specify whether to train or evaluate a mode
 flags.DEFINE_boolean('visualize', False, 'Specify whether to train or evaluate a model.')
 flags.DEFINE_string('runId', "", 'Specify path to the run directory.')
 config = yaml.load(open("configs/config.yaml", "r"), Loader=yaml.FullLoader)
-iscuda = common.torch_set_gpu(config["gpu"])
+iscuda = utils_misc.torch_set_gpu(config["gpu"])
 device = torch.device("cuda" if iscuda else "cpu")
 
 
@@ -49,60 +49,73 @@ def main(argv):
         print("\n>> Creating networks..")
         if config["train_fe"]:
             # dataset object for single lidar range images
-            train_single_dt = SingleDataset(root=data_dir)
-            # test_single_dt = SingleDataset(root=config["autoencoder"]["test_data_dir"])
+            combined_dataset = []
+            for dt in config["datasets"]:
+                dataset = config["dataset"][dt]
+                if os.path.exists(dataset['data_dir']):
+                    single_dt = SingleDataset(root=dataset['data_dir'])
+                    combined_dataset.append(single_dt)
 
-            dataloader = SingleLoader(dataset=train_single_dt)
+            full_dataset = ConcatDataset(combined_dataset)
 
-            train_loader, val_loader = train_test_split(dataloader, train_size=0.7, random_state=42)
-            val_loader, test_loader = train_test_split(val_loader, train_size=0.5, random_state=42)
+            train_size = int(0.8 * len(full_dataset))  # 80% for training
+            val_size = len(full_dataset) - train_size
 
-            # params = config["autoencoder"]["params"]
+            train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+
             net = AutoEncoder(fe_params).to(device)
+            test_network("ae", train_dataset, net)
+
+            train_loader = threaded_loader(train_dataset, batch_size=4, iscuda=iscuda, threads=1)
+            val_loader = threaded_loader(val_dataset, batch_size=4, iscuda=iscuda, threads=1)
 
             if FLAGS.train:
-                train_thread_loader = threaded_loader(train_loader, batch_size=4, iscuda=iscuda, threads=1)
-                val_thread_loader = threaded_loader(val_loader, batch_size=4, iscuda=iscuda, threads=1)
-                train = TrainAutoEncoder(net=net, train_loader=train_thread_loader, val_loader=val_thread_loader,
-                                         config=config, title="ResNet", is_cuda=iscuda,
-                                         max_count=len(dataloader), run_paths=run_paths)
+                train = TrainAutoEncoder(net=net, train_loader=train_loader, val_loader=val_loader,
+                                         config=config, title="DarkNet", is_cuda=iscuda, run_paths=run_paths)
                 train()
 
+            elif FLAGS.tune:
+                tune = TuneS2leceNet(config, train_loader, val_loader, run_paths, iscuda, device)
+                tune()
+
             else:
-                # test_network("ae", dataloader, net)
-                evaluation(net, test_loader)
+                evaluation(net, val_loader)
         else:
             # dataset object for real pair lidar data
-            train_r_pair_dt = RealPairDataset(root=data_dir)
-            # test_r_pair_dt = RealPairDataset(root=config["test_data_dir"])
+            pair_dt = RealPairDataset(root=data_dir)
 
-            # dataloader = PairLoader(dataset=train_r_pair_dt)
-            # test_dataloader = PairLoader(dataset=test_r_pair_dt)
-            train_size = int(0.8 * len(train_r_pair_dt))  # 80% for training
-            test_size = len(train_r_pair_dt) - train_size
+            train_size = int(0.8 * len(pair_dt))  # 80% for training
+            val_size = len(pair_dt) - train_size
 
-            train_dataset, test_dataset = random_split(train_r_pair_dt, [train_size, test_size])
+            train_dataset, val_dataset = random_split(pair_dt, [train_size, val_size])
+
+            # val_size = int(0.8 * len(val_dataset))
+            # test_size = len(val_dataset) - val_size
+            # val_dataset, test_dataset = random_split(val_dataset, [val_size, test_size])
 
             # train_loader, val_loader = train_test_split(dataloader, train_size=0.7, random_state=42)
             # val_loader, test_loader = train_test_split(val_loader, train_size=0.5, random_state=42)
 
+            feature_net = AutoEncoder(fe_params).to(device)
+            encoder = load_encoder(feature_net, fe_params["save_path"])
             net = SleceNet(config, device, sl_params, fe_params).to(device)
-            test_network("s2lece", train_dataset, net)
+            # test_network("s2lece", val_dataset, net)
+
+            train_loader = threaded_loader(train_dataset, batch_size=4, iscuda=iscuda, threads=1)
+            val_loader = threaded_loader(val_dataset, batch_size=4, iscuda=iscuda, threads=1)
 
             if FLAGS.train:
-                loader = threaded_loader(train_dataset, batch_size=4, iscuda=iscuda, threads=1)
-                test_loader = threaded_loader(test_dataset, batch_size=4, iscuda=iscuda, threads=1)
-                train = TrainSleceNet(net=net, dataloader=loader, test_dataloader=test_loader, config=config,
+                train = TrainSleceNet(net=net, dataloader=train_loader, test_dataloader=val_loader, config=config,
                                       run_paths=run_paths, is_cuda=iscuda)
                 train()
 
             elif FLAGS.tune:
-                tune = TuneS2leceNet(config, dataloader, val_loader, run_paths, iscuda, device)
+                tune = TuneS2leceNet(config, train_loader, val_loader, run_paths, iscuda, device)
                 tune()
 
             else:
                 # random_evaluation(net)
-                evaluation(net, test_r_pair_dt)
+                evaluation(net, val_dataset)
 
 
 def evaluation(net, dataset):

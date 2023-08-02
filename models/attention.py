@@ -61,18 +61,25 @@ class SelfAttention(Attention):
 
 
 class CrossAttention(Attention):
-    def __init__(self, embed_dim, in_channel=32, num_heads=4):
+    def __init__(self, embed_dim, in_channel_source=32, in_channel_target=32, num_heads=4):
         super(CrossAttention, self).__init__(embed_dim)
-        self.cross_linear_embedding = nn.Sequential(
-            nn.Linear(in_channel, embed_dim),
+        self.cross_linear_embedding_source = nn.Sequential(
+            nn.Linear(in_channel_source, embed_dim),
             nn.LayerNorm(embed_dim)
         )
+        self.cross_linear_embedding_target = nn.Sequential(
+            nn.Linear(in_channel_target, embed_dim),
+            nn.LayerNorm(embed_dim)
+        )
+
         self.position_embedding = PositionEmbeddingSine(num_pos_feats=embed_dim//2)
         self.MHCA = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads)
 
     def forward(self, feature1, feature2):
-        source = self.cross_linear_embedding(feature1.flatten(2).permute(0, 2, 1))
-        target = self.cross_linear_embedding(feature2.flatten(2).permute(0, 2, 1))
+        # print(f"f1 : {feature1.device.type}")
+        # print(f"f2 : {feature2.device.type}")
+        source = self.cross_linear_embedding_source(feature1.flatten(2).permute(0, 2, 1))
+        target = self.cross_linear_embedding_target(feature2.flatten(2).permute(0, 2, 1))
         source_pos = self.position_embedding(feature1)
         target_pos = self.position_embedding(feature2)
 

@@ -1,5 +1,5 @@
 #general
-train_fe: False
+train_fe: True
 gpu:
   - -1
 dataset_choice: 4
@@ -60,7 +60,7 @@ correspondence:
 autoencoder:
   train_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v6'
   test_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v4'
-  save_path: '/home/paxstan/Documents/research_project/code/runs/fe_run/fe_ae_darknet21.pt'
+  save_path: '/home/paxstan/Documents/research_project/code/runs/fe_run/fe_ae_darknet_full.pt'
   learning_rate: 0.01
   weight_decay: 0.0001
   momentum: 0.9          # sgd momentum
@@ -68,7 +68,8 @@ autoencoder:
   wup_epochs: 1
   lr_decay: 0.995        # learning rate decay per epoch after initial cycle (from min lr)
   ckpt_interval: 10
-  enable_wandb: False
+  early_stopping: 10
+  enable_wandb: True
   params:
     in_channel: 1
     dropout: 0.01
@@ -80,12 +81,13 @@ autoencoder:
 s2lece:
   train_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v6'
   test_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v4'
-  save_path: 'slece_model_test_e20_new_loss.pt'
+  save_path: '/home/paxstan/Documents/research_project/code/slece_model_test_e5_new_loss.pt'
   field_name: 'x, y, z, intensity'
-  learning_rate: 2e-4
+  learning_rate: 1e-3
   weight_decay: 5e-4
-  epoch: 50
-  ckpt_interval: 10
+  epoch: 5
+  ckpt_interval: 3
+  early_stopping: 10
   enable_wandb: False
   params:
     iters: 5

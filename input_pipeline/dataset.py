@@ -1,13 +1,13 @@
-import copy
 import os
 import numpy as np
-from utils.transform_tools import persp_apply
-from utils.data_conversion import project_point_cloud
 from scipy.spatial.transform import Rotation as R
 from input_pipeline.preprocessing import preprocess_range_image
 from PIL import Image
+import torch
 from torch.utils.data import Dataset
+import torchvision.transforms as tvf
 
+to_tensor = tvf.Compose([tvf.ToTensor()])
 
 # class Dataset(object):
 #     """ Base class for a dataset. To be overloaded.
@@ -152,17 +152,17 @@ class RealPairDataset(LidarBase):
 
         # img1 = img1.astype(float)
         # img2 = img2.astype(float)
-        # flow = flow.transpose((2, 0, 1))
-        # initial_flow = initial_flow.transpose((2, 0, 1))
+        flow = flow.transpose((1, 2, 0))
+        initial_flow = initial_flow.transpose((1, 2, 0))
 
         result = dict(
-            img1=img1,
-            img2=img2,
-            flow=flow,
-            initial_flow=initial_flow,
-            mask1=mask1,
-            mask2=mask2,
-            mask=mask
+            img1=to_tensor(img1).to(torch.float32),
+            img2=to_tensor(img2).to(torch.float32),
+            flow=to_tensor(flow),
+            initial_flow=to_tensor(initial_flow),
+            mask1=to_tensor(mask1),
+            mask2=to_tensor(mask2),
+            mask=to_tensor(mask)
         )
         return result
 
@@ -191,10 +191,14 @@ class SingleDataset(LidarBase):
     def __len__(self):
         return self.npairs
 
-    def get_item(self, idx):
+    def __getitem__(self, idx):
         img = self.load_np_file(os.path.join(self.root, str(idx), 'range.npy'))
         mask = self.load_np_file(os.path.join(self.root, str(idx), 'valid_mask.npy'))
         img = img * mask
         img[img == -0.0] = 0.0
 
-        return img, mask
+        result = dict(
+            img=to_tensor(img).to(torch.float32),
+            mask=to_tensor(mask),
+        )
+        return result

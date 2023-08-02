@@ -135,111 +135,7 @@ def flow_to_color(flow_uv, clip_flow=None, convert_to_bgr=False):
     return flow_compute_color(u, v, convert_to_bgr)
 
 
-def show_flow(img0, img1, flow, mask=None):
-    img0 = np.asarray(img0)
-    img1 = np.asarray(img1)
-    if mask is None: mask = 1
-    mask = np.asarray(mask)
-    if mask.ndim == 2: mask = mask[:, :, None]
-    assert flow.ndim == 3
-    assert flow.shape[:2] == img0.shape[:2] and flow.shape[2] == 2
-
-    def noticks():
-        plt.xticks([])
-        plt.yticks([])
-
-    fig = plt.figure("showing correspondences")
-    ax1 = plt.subplot(221)
-    ax1.numaxis = 0
-    plt.imshow(img0 * mask)
-    noticks()
-    ax2 = plt.subplot(222)
-    ax2.numaxis = 1
-    plt.imshow(img1)
-    noticks()
-
-    ax = plt.subplot(212)
-    ax.numaxis = 0
-    flow_img = flow_to_color(np.where(np.isnan(flow), 0, flow))
-    plt.imshow(flow_img * mask)
-    noticks()
-
-    plt.subplots_adjust(0.01, 0.01, 0.99, 0.99, wspace=0.02, hspace=0.02)
-
-    def motion_notify_callback(event):
-        if event.inaxes is None:
-            return
-        x, y = event.xdata, event.ydata
-        # remove all lines
-        while ax1.lines:
-            ax1.lines[0].remove()
-        while ax2.lines:
-            ax2.lines[0].remove()
-        # ax1.lines = []
-        # ax2.lines = []
-        try:
-            x, y = int(x + 0.5), int(y + 0.5)
-            ax1.plot(x, y, '+', ms=10, mew=2, color='blue', scalex=False, scaley=False)
-            x, y = flow[y, x] + (x, y)
-            ax2.plot(x, y, '+', ms=10, mew=2, color='red', scalex=False, scaley=False)
-            # we redraw only the concerned axes
-            renderer = fig.canvas.get_renderer()
-            ax1.draw(renderer)
-            ax2.draw(renderer)
-            fig.canvas.blit(ax1.bbox)
-            fig.canvas.blit(ax2.bbox)
-        except IndexError:
-            return
-
-    cid_move = fig.canvas.mpl_connect('motion_notify_event', motion_notify_callback)
-    print("Move your mouse over the images to show matches (ctrl-C to quit)")
-    plt.show(block=True)
-
-
-def flow2rgb(flow_map, max_value=None):
-    flow_map_np = np.floor(flow_map.detach().squeeze().numpy())
-    _, h, w = flow_map_np.shape
-    flow_map_np[:, (flow_map_np[0] == 0) & (flow_map_np[1] == 0)] = float('nan')
-    rgb_map = np.ones((3, h, w)).astype(np.float32)
-    if max_value is not None:
-        normalized_flow_map = flow_map_np / max_value
-    else:
-        normalized_flow_map = flow_map_np / (np.nanmax(np.abs(flow_map_np)))
-    rgb_map[0] += normalized_flow_map[0]  # more red if flow[0] is large
-    rgb_map[1] -= 0.5 * (
-            normalized_flow_map[0] + normalized_flow_map[1])  # more blue if in between displacement is large
-    rgb_map[2] += normalized_flow_map[1]  # more green if flow[1] is large
-    return rgb_map.clip(0, 1)
-
-
-def display_flows(**kwargs):
-    # Create subplots
-    fig, axes = plt.subplots(len(kwargs), 1, sharex=True, sharey=True)
-
-    for index, (key, value) in enumerate(kwargs.items()):
-        rgb_flow = flow2rgb(20 * value, max_value=None)
-        img = (rgb_flow * 255).astype(np.uint8).transpose(1, 2, 0)
-        axes[index].imshow(img, cmap='gray')
-        axes[index].set_title(key)
-    plt.tight_layout()
-    plt.show()
-
-
-def visualize_correlation(corr_result, grid_size):
-    corr_result = corr_result.detach().squeeze().numpy()
-    fig, axs = plt.subplots(grid_size, grid_size, sharex=True, sharey=True)
-    for i in range(grid_size):
-        for j in range(grid_size):
-            # Select the channel to plot
-            channel = corr_result[i * grid_size + j]
-
-            # Plot the channel in the corresponding subplot
-            axs[i, j].imshow(channel)
-            axs[i, j].set_title(f'Channel {i * grid_size + j}')
-            axs[i, j].axis('off')
-
-
-def compare_flow(target_flow, pred_flow, idx=1, loss=0):
+def compare_flow(target_flow, pred_flow, path, idx=1, loss=0):
     pred_last_np = np.floor(pred_flow[0, :, :, :]
                             .cpu().detach().numpy()).transpose(1, 2, 0).reshape(32 * 2000, 2)
     # invalid_mask = ~valid_masks[-1][0, :, :].cpu().detach().numpy().flatten()
@@ -258,16 +154,14 @@ def compare_flow(target_flow, pred_flow, idx=1, loss=0):
     # plt.text(2.5, -5, f'loss: {loss}', ha='center')
     plt.figtext(0.5, 0.05, f'loss: {loss}', ha='center')
 
-    # plt.savefig(f"/home/paxstan/Documents/research_project/code/runs/pred_optical_flow_{idx}.png")
-    plt.show()
+    plt.savefig(f"{path}/pred_optical_flow_{idx}.png")
+    # plt.show()
 
 
-def show_visual_progress(org_img, pred_img, path="", title=None, loss=0):
-    if title:
-        plt.title(title)
-
-    org_img = org_img.detach().cpu().numpy()[0, 0, :, :].reshape(32, 2000)
-    pred_img = pred_img.detach().cpu().numpy()[0, 0, :, :].reshape(32, 2000)
+def show_visual_progress(org_img, pred_img, path, title=None, loss=0):
+    b, c, h, w = org_img.shape
+    org_img = org_img.detach().cpu().numpy()[0, 0]
+    pred_img = pred_img.detach().cpu().numpy()[0, 0]
 
     fig, axes = plt.subplots(2, 1, sharex=True, sharey=True)
     axes[0].imshow(org_img)
@@ -279,7 +173,8 @@ def show_visual_progress(org_img, pred_img, path="", title=None, loss=0):
 
     if title:
         title = title.replace(" ", "_")
-        plt.savefig(f"{path}/{title}")
+        plt.savefig(f"{path}/{title}", dpi=300)
+    plt.close(fig)
 
 
 def visualize_point_cloud(pred_flow, mask_valid, metadata, transform=False):
@@ -393,11 +288,3 @@ def visualize_correspondence(source_point, target_point, valid_corres_id, transf
     # o3d.io.write_image("visualization.png", image)
 
     vis.destroy_window()
-
-
-def register_mouse_callback(vis):
-    print("Picked points:", vis.get_picked_points())
-    # if vis.event.button == o3d.visualization.Button.Left:
-    #     print("Left button clicked")
-    #     if vis.has_been_picked():
-    #         print("Picked points:", vis.get_picked_points())

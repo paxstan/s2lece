@@ -1,7 +1,4 @@
 import numpy as np
-import pdb
-from PIL import Image
-from utils.transform_tools import persp_apply
 import torch
 import torchvision.transforms as tvf
 from torch.utils.data import DataLoader, random_split
@@ -77,23 +74,6 @@ class SingleLoader:
         #         img = distort_fn(img)
         img = normalize_img(img)
 
-        return {'img': img, 'mask': mask, 'weight': weight}
-
-
-class oldSingleLoader:
-    def __init__(self, dataset):
-        assert hasattr(dataset, 'npairs')
-        assert hasattr(dataset, 'get_item')
-        self.dataset = dataset
-
-    def __len__(self):
-        assert len(self.dataset) == self.dataset.npairs, "not same length"  # and not nimg
-        return len(self.dataset)
-
-    def __getitem__(self, i):
-        print(len(self.dataset))
-        img, mask = self.dataset.get_item(0)
-        img, weight = preprocess_range_image(img)
         return {'img': img, 'mask': mask, 'weight': weight}
 
 

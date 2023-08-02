@@ -3,7 +3,7 @@ from matplotlib import pyplot as plt
 from input_pipeline.dataloader import normalize_img
 import numpy as np
 import torch
-from models.utils import loss_criterion
+from models.utils import s2lece_loss_criterion, ae_loss_criterion
 import torch.nn.functional as F
 import torch.nn as nn
 
@@ -41,15 +41,12 @@ def test_network(type_net, dataloader, net):
             for idx, input_data in enumerate(dataloader):
                 img = input_data.pop('img')
                 mask = input_data.pop('mask')
-                weight = input_data.pop('weight')
                 img = torch.unsqueeze(torch.tensor(img), 0)
                 mask = torch.unsqueeze(torch.tensor(mask), 0)
-                weight = torch.unsqueeze(torch.tensor(weight), 0)
-                # x, skips = net["encoder"](img)
-                # pred_img = net["decoder"](x, skips)
                 pred_img = net(img)
-                recon_loss = F.mse_loss(pred_img, img, reduction='mean')
-                print("loss:", recon_loss.mean())
+                # recon_loss = F.mse_loss(pred_img, img, reduction='mean')
+                loss = ae_loss_criterion(pred_img, img, mask)
+                print("loss:", loss.item())
 
                 if idx == max_count - 1:
                     break
@@ -64,8 +61,8 @@ def test_network(type_net, dataloader, net):
                     mask = input_data.pop('mask')
                     mask1 = input_data.pop('mask1')
                     mask2 = input_data.pop('mask2')
-                    img1 = torch.unsqueeze(torch.tensor(img1), 0).unsqueeze(0).to(torch.float32)
-                    img2 = torch.unsqueeze(torch.tensor(img2), 0).unsqueeze(0).to(torch.float32)
+                    img1 = torch.unsqueeze(img1, 0).to(torch.float32)
+                    img2 = torch.unsqueeze(img2, 0).to(torch.float32)
                     mask = torch.unsqueeze(torch.tensor(mask), 0)
                     target_flow = torch.unsqueeze(torch.tensor(flow), 0)
                     initial_flow = torch.unsqueeze(torch.tensor(initial_flow), 0)
@@ -75,10 +72,11 @@ def test_network(type_net, dataloader, net):
                     pred_flow = net(img1, img2)
                     pred_flow[:, 0] = pred_flow[:, 0] * mask
                     pred_flow[:, 1] = pred_flow[:, 1] * mask
-                    flow_loss, metrics, = loss_criterion(initial_flow, pred_flow, target_flow, train=False)
+                    pred_flow = np.round(pred_flow)
+                    flow_loss, metrics, = s2lece_loss_criterion(pred_flow, target_flow, train=False)
                     print(flow_loss)
                     print(metrics)
-                    compare_flow(target_flow, pred_flow, loss=flow_loss)
+                    compare_flow(target_flow, pred_flow, loss=flow_loss, path="/home/paxstan/Documents/research_project/code")
 
                     # pred_last_np = np.floor(pred_flow[-1].detach().squeeze().numpy()).transpose(1, 2, 0).reshape(
                     #     32 * 1024, 2)

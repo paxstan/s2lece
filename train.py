@@ -3,7 +3,7 @@ from tqdm import tqdm
 import wandb
 import torch.nn.functional as F
 import torch.optim.lr_scheduler as toptim
-from models.utils import loss_criterion
+from models.utils import s2lece_loss_criterion, ae_loss_criterion
 from visualization.visualization import compare_flow, show_visual_progress
 import os
 import logging
@@ -21,10 +21,13 @@ class Train:
         self.save_path = os.path.join(run_paths['path_model_id'], config[model_type]["save_path"])
         self.epochs = config[model_type]['epoch']
         self.learning_rate = float(config[model_type]['learning_rate'])
+        self.early_stop_limit = config[model_type]['early_stopping']
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate)
         self.is_cuda = is_cuda
         self.train_loss = 0
         self.val_loss = 0
+        self.best_loss = 0
+        self.stop_counter = 0
         self.wandb_config = {
             "learning_rate": self.learning_rate,
             "architecture": model_type,
@@ -51,6 +54,23 @@ class Train:
             logging.info(log)
             if self.enable_wandb:
                 wandb.log(result)
+            if result['val loss'] < self.best_loss or result["epoch"] == 0:
+                self.best_loss = result['val loss']
+                print(f"best loss: {self.best_loss}")
+                torch.save({
+                    'epoch': result['epoch'] + 1,
+                    'model_state_dict': self.net.state_dict(),
+                    'optimizer_state_dict': self.optimizer.state_dict(),
+                    'loss': self.train_loss,
+                    'val loss': self.val_loss
+                }, os.path.join(self.ckpt_path, "best_model.pt"))
+                self.stop_counter = 0
+            else:
+                self.stop_counter += 1
+            # if self.early_stop_limit <= self.stop_counter:
+            #     print("Stopping early!!!!!")
+            #     break
+
             if result['epoch'] % self.ckpt_interval == 0:
                 logging.info(f"Saving checkpoint at epoch {result['epoch'] + 1}.")
                 torch.save({
@@ -58,6 +78,7 @@ class Train:
                     'model_state_dict': self.net.state_dict(),
                     'optimizer_state_dict': self.optimizer.state_dict(),
                     'loss': self.train_loss,
+                    'val loss': self.val_loss
                 }, os.path.join(self.ckpt_path, f"ckpts_{result['epoch'] + 1}.pt"))
 
         if self.model_type == "autoencoder":
@@ -150,9 +171,10 @@ class TrainAutoEncoder(Train):
         self.max_count = max_count
 
     @staticmethod
-    def loss_fn(recon_x, x):
+    def loss_fn(recon_x, x, mask):
         # Reconstruction loss
-        recon_loss = F.mse_loss(recon_x, x, reduction='mean')
+        recon_loss = ae_loss_criterion(recon_x, x, mask)
+        # recon_loss = F.mse_loss(recon_x, x, reduction='mean')
         return recon_loss
 
     def train_epoch(self):
@@ -160,22 +182,19 @@ class TrainAutoEncoder(Train):
         image_title = ""
 
         for i in range(self.start_epoch, self.epochs):
-            print(f"epoch: {i}")
+            self.net.train()
             for idx, inputs in enumerate(tqdm(self.dataloader)):
                 inputs = self.todevice(inputs)
                 img = inputs.pop('img')
                 mask = inputs.pop('mask')
-                weight = inputs.pop('weight')
                 self.optimizer.zero_grad()
                 pred = self.net(img)
-                loss = self.loss_fn(pred, img)
+                loss = self.loss_fn(pred, img, mask)
                 loss.backward()
                 self.optimizer.step()
                 train_losses.append(loss.detach().item())
                 del loss, pred
                 torch.cuda.empty_cache()
-                # if idx == self.max_count - 1:
-                #     break
             if self.title:
                 image_title = f'{self.title} - Epoch {i}'
             self.train_loss = (sum(train_losses) / len(train_losses))
@@ -185,12 +204,14 @@ class TrainAutoEncoder(Train):
 
     def evaluate_autoencoder(self, title, progress_view=True):
         losses = []
-        for idx, batch in enumerate(self.val_loader):
-            with torch.no_grad():
+        self.net.eval()
+        with torch.no_grad():
+            for idx, batch in enumerate(self.val_loader):
                 batch = self.todevice(batch)
                 img = batch.pop('img')
+                mask = batch.pop('mask')
                 pred = self.net(img)
-                loss = self.loss_fn(pred, img)
+                loss = self.loss_fn(pred, img, mask)
                 losses.append(loss.detach().item())
                 if progress_view:
                     show_visual_progress(img, pred, self.progress_path, title=title, loss=loss)
@@ -206,6 +227,13 @@ class TrainSleceNet(Train):
         self.dataloader = dataloader
         self.test_dataloader = test_dataloader
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate)
+        # self.optimizer = torch.optim.AdamW(self.net.parameters(),
+        #                                    lr=self.learning_rate, weight_decay=self.weight_decay,
+        #                                    eps=self.epsilon)
+        # self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer,
+        #                                                      self.learning_rate, args.num_steps + 100,
+        #                                                      pct_start=0.05, cycle_momentum=False,
+        #                                                      anneal_strategy='linear')
         checkpoint = self.load_checkpoint(self.ckpt_path)
         if checkpoint is None:
             self.start_epoch = 0
@@ -246,6 +274,7 @@ class TrainSleceNet(Train):
     def train_epoch(self):
         train_losses = []
         for i in range(self.start_epoch, self.epochs):
+            self.net.train()
             for _, inputs in enumerate(tqdm(self.dataloader)):
                 inputs = self.todevice(inputs)
                 img1 = inputs.pop('img1')
@@ -254,9 +283,9 @@ class TrainSleceNet(Train):
                 initial_flow = inputs.pop('initial_flow')
                 mask = inputs.pop('mask')
                 pred_flow = self.net(img1, img2)
-                pred_flow[:, 0] = pred_flow[:, 0] * mask
-                pred_flow[:, 1] = pred_flow[:, 1] * mask
-                flow_loss, metrics = loss_criterion(initial_flow, pred_flow, target_flow, train=False)
+                pred_flow[:, 0] = pred_flow[:, 0] * mask[:, 0]
+                pred_flow[:, 1] = pred_flow[:, 1] * mask[:, 0]
+                flow_loss, metrics = loss_criterion(initial_flow, pred_flow, target_flow, mask)
 
                 self.optimizer.zero_grad()
                 flow_loss.backward()
@@ -266,70 +295,86 @@ class TrainSleceNet(Train):
                 train_losses.append(loss)
                 del flow_loss
                 torch.cuda.empty_cache()
+
+            # print(f"train has nan: {has_nan(train_losses)}")
+            # print(f"train has sum: {train_losses}")
             self.train_loss = (sum(train_losses) / len(train_losses))
             self.evaluate_slece(i_epoch=i)
             yield {"train loss": self.train_loss, "val loss": self.val_loss, "epoch": i}
 
     def evaluate_slece(self, i_epoch):
         losses = []
-        for idx, inputs in enumerate(self.test_dataloader):
-            with torch.no_grad():
+        self.net.eval()
+        with torch.no_grad():
+            for idx, inputs in enumerate(self.test_dataloader):
                 inputs = self.todevice(inputs)
                 img1 = inputs.pop('img1')
                 img2 = inputs.pop('img2')
-                target_flow = inputs.pop('aflow')
-                mask2 = inputs.pop('mask2')
+                target_flow = inputs.pop('flow')
+                initial_flow = inputs.pop('initial_flow')
+                mask = inputs.pop('mask')
                 pred_flow = self.net(img1, img2)
-                flow_loss, metrics, valid_masks = loss_criterion(pred_flow, target_flow, mask2, img1, img2)
+                pred_flow[:, 0] = pred_flow[:, 0] * mask[:, 0]
+                pred_flow[:, 1] = pred_flow[:, 1] * mask[:, 0]
+                flow_loss, metrics = loss_criterion(initial_flow, pred_flow, target_flow, mask=mask, train=False)
                 if idx == 1:
-                    compare_flow(target_flow, pred_flow, valid_masks, loss=flow_loss, idx=i_epoch)
+                    compare_flow(target_flow, pred_flow, self.progress_path, loss=flow_loss, idx=i_epoch)
                 losses.append(flow_loss.detach().item())
 
+        # print(f"val has nan: {has_nan(losses)}")
+        # print(f"val has sum: {sum(losses)}")
         self.val_loss = (sum(losses) / len(losses))  # calculate mean
 
 
 class warmupLR(toptim.LRScheduler):
-  """ Warmup learning rate scheduler.
+    """ Warmup learning rate scheduler.
       Initially, increases the learning rate from 0 to the final value, in a
       certain number of steps. After this number of steps, each step decreases
       LR exponentially.
   """
 
-  def __init__(self, optimizer, lr, warmup_steps, momentum, decay):
-    # cyclic params
-    self.optimizer = optimizer
-    self.lr = lr
-    self.warmup_steps = warmup_steps
-    self.momentum = momentum
-    self.decay = decay
+    def __init__(self, optimizer, lr, warmup_steps, momentum, decay):
+        # cyclic params
+        self.optimizer = optimizer
+        self.lr = lr
+        self.warmup_steps = warmup_steps
+        self.momentum = momentum
+        self.decay = decay
 
-    # cap to one
-    if self.warmup_steps < 1:
-      self.warmup_steps = 1
+        # cap to one
+        if self.warmup_steps < 1:
+            self.warmup_steps = 1
 
-    # cyclic lr
-    self.initial_scheduler = toptim.CyclicLR(self.optimizer,
-                                             base_lr=0,
-                                             max_lr=self.lr,
-                                             step_size_up=self.warmup_steps,
-                                             step_size_down=self.warmup_steps,
-                                             cycle_momentum=False,
-                                             base_momentum=self.momentum,
-                                             max_momentum=self.momentum)
+        # cyclic lr
+        self.initial_scheduler = toptim.CyclicLR(self.optimizer,
+                                                 base_lr=0,
+                                                 max_lr=self.lr,
+                                                 step_size_up=self.warmup_steps,
+                                                 step_size_down=self.warmup_steps,
+                                                 cycle_momentum=False,
+                                                 base_momentum=self.momentum,
+                                                 max_momentum=self.momentum)
 
-    # our params
-    self.last_epoch = -1  # fix for pytorch 1.1 and below
-    self.finished = False  # am i done
-    super().__init__(optimizer)
+        # our params
+        self.last_epoch = -1  # fix for pytorch 1.1 and below
+        self.finished = False  # am i done
+        super().__init__(optimizer)
 
-  def get_lr(self):
-    return [self.lr * (self.decay ** self.last_epoch) for lr in self.base_lrs]
+    def get_lr(self):
+        return [self.lr * (self.decay ** self.last_epoch) for lr in self.base_lrs]
 
-  def step(self, epoch=None):
-    if self.finished or self.initial_scheduler.last_epoch >= self.warmup_steps:
-      if not self.finished:
-        self.base_lrs = [self.lr for lr in self.base_lrs]
-        self.finished = True
-      return super(warmupLR, self).step(epoch)
-    else:
-      return self.initial_scheduler.step(epoch)
+    def step(self, epoch=None):
+        if self.finished or self.initial_scheduler.last_epoch >= self.warmup_steps:
+            if not self.finished:
+                self.base_lrs = [self.lr for lr in self.base_lrs]
+                self.finished = True
+            return super(warmupLR, self).step(epoch)
+        else:
+            return self.initial_scheduler.step(epoch)
+
+
+def has_nan(lst):
+    for item in lst:
+        if isinstance(item, torch.Tensor) and torch.isnan(item).any():
+            return True
+    return False
