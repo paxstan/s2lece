@@ -53,7 +53,7 @@ class DatasetCreator:
 
                 if self.generate_ground_truth:
 
-                    assert i < len(self.ground_truth_imu)-1, "i should be less than length of gt file"  # len(self.ground_truth_imu)-1
+                    assert i < 20, "i should be less than length of gt file"  # len(self.ground_truth_imu)-1
                     if self.ground_truth_imu[i][0] == time.to_time():
 
                         # process and save point cloud in the form of npy file
@@ -64,6 +64,7 @@ class DatasetCreator:
                         print(f"processed... {i}")
                         i = i + 1
                 else:
+                    assert i < 20, "i should be less than length of gt file"
                     # process and save point cloud in the form of npy file
                     self.lidar_data_converter(data, i)
 
@@ -80,7 +81,7 @@ class DatasetCreator:
     def generate_pairs(self):
         list_of_pairs = []
         dt = np.dtype([('source', np.int32), ('target', np.int32), ('corres', 'object')])
-        poses = self.ground_truth_imu[:, 1:4]
+        poses = np.load(self.gt_gen_path)
         pair_threshold = self.correspondence_param["pair_distance"]
         for i, pose in enumerate(poses):
             try:

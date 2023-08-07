@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import copy
-from models.utils import linear_position_embedding_sine, PositionEmbeddingSine
+from models.model_utils import linear_position_embedding_sine, PositionEmbeddingSine
 
 
 class Attention(nn.Module):
