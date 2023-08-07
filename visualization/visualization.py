@@ -6,7 +6,7 @@ import pdb
 import numpy as np
 import matplotlib.pyplot as plt
 import open3d as o3d
-from models.utils import coords_grid
+from models.model_utils import coords_grid
 
 
 def make_colorwheel():
@@ -154,7 +154,9 @@ def compare_flow(target_flow, pred_flow, path, idx=1, loss=0):
     # plt.text(2.5, -5, f'loss: {loss}', ha='center')
     plt.figtext(0.5, 0.05, f'loss: {loss}', ha='center')
 
-    plt.savefig(f"{path}/pred_optical_flow_{idx}.png")
+    plt.savefig(f"{path}/pred_optical_flow_{idx}.png", dpi=300)
+
+    plt.close(fig)
     # plt.show()
 
 

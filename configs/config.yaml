@@ -10,15 +10,24 @@ datasets:
   - 'exp04'
   - 'exp05'
   - 'exp06'
+  - 'synth_data'
 
 #dataset creation
 dataset:
+  synth_data:
+    path: '../../data/hilti/rosbag/exp05_imu'
+    ros_bag: 'exp05_construction_upper_level_2.bag'
+    ground_truth: 'exp_05_construction_upper_level_2_imu.txt'
+    data_dir: '../dataset/synth_data2'
+    generate_ground_truth: True
   exp05:
     path: '../../data/hilti/rosbag/exp05_imu'
     ros_bag: 'exp05_construction_upper_level_2.bag'
     ground_truth : 'exp_05_construction_upper_level_2_imu.txt'
-    data_dir: '../dataset/exp05'
-    generate_ground_truth: True
+    data_dir: '../dataset/exp05_xyz2'
+    generate_ground_truth: False
+    mean: 5.2251
+    std: 9.6430
   exp04:
     path: '../../data/hilti/rosbag/exp04_imu'
     ros_bag: 'exp04_construction_upper_level.bag'
@@ -58,9 +67,7 @@ correspondence:
 
 # Auto encoder
 autoencoder:
-  train_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v6'
-  test_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v4'
-  save_path: '/home/paxstan/Documents/research_project/code/runs/fe_run/fe_ae_darknet_full.pt'
+  save_path: 'fe_ae_darknet_full.pt'
   learning_rate: 0.01
   weight_decay: 0.0001
   momentum: 0.9          # sgd momentum
@@ -69,7 +76,7 @@ autoencoder:
   lr_decay: 0.995        # learning rate decay per epoch after initial cycle (from min lr)
   ckpt_interval: 10
   early_stopping: 10
-  enable_wandb: True
+  enable_wandb: False
   params:
     in_channel: 1
     dropout: 0.01
@@ -79,20 +86,24 @@ autoencoder:
 
 # flow model
 s2lece:
-  train_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v6'
-  test_data_dir: '/home/paxstan/Documents/research_project/code/s2lece/dataset/data_v4'
-  save_path: '/home/paxstan/Documents/research_project/code/slece_model_test_e5_new_loss.pt'
+  save_path: 'slece_model_test_e5_new_opt.pt'
   field_name: 'x, y, z, intensity'
-  learning_rate: 1e-3
-  weight_decay: 5e-4
-  epoch: 5
-  ckpt_interval: 3
+  learning_rate: 0.01
+  weight_decay: 0.0001
+  momentum: 0.9          # sgd momentum
+  mixed_precision: True
+  clip: 1.0
+  epoch: 10
+  wup_epochs: 1
+  lr_decay: 0.995        # learning rate decay per epoch after initial cycle (from min lr)
+  batch_size: 2
+  ckpt_interval: 2
   early_stopping: 10
-  enable_wandb: False
+  enable_wandb: True
+  epsilon: 1e-8
   params:
-    iters: 5
     embedded_dim: 32
-    downsample_factor: 16
+    dropout: 0.0
 
 #lidarparameter
 lidar_param:

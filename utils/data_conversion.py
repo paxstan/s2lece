@@ -25,6 +25,7 @@ class LidarDataConverter:
         self.proj_x = None
         self.proj_y = None
         self.proj_idx = None
+        self.un_proj_xyz = None
         self.proj_xyz = None
         self.proj_mask = None
         self.un_proj_range = None
@@ -42,8 +43,12 @@ class LidarDataConverter:
         # projected range image - [H,W] range (-1 is no data)
         self.proj_range = np.full((self.proj_H, self.proj_W), -1, dtype=np.float32)
 
+        # unprojected range (list of depths for each point)
+        self.un_proj_range = np.zeros((0, 1), dtype=np.float32)
+
         # projected point cloud xyz - [H,W,3] xyz coord (-1 is no data)
         self.proj_xyz = np.full((self.proj_H, self.proj_W, 3), -1, dtype=np.float32)
+        self.un_proj_xyz = np.zeros((0, 1), dtype=np.float32)
 
         # projected index (for each pixel, what I am in the pointcloud)
         # [H,W] index (-1 is no data)
@@ -69,6 +74,8 @@ class LidarDataConverter:
         proj_x, proj_y, depth = project_point_cloud(self.points, height=self.proj_H, width=self.proj_W)
         self.proj_x = np.copy(proj_x)  # store a copy in orig order
         self.proj_y = np.copy(proj_y)  # store a copy in original order
+        self.un_proj_range = np.copy(depth)
+        self.un_proj_xyz = np.copy(self.points)
 
         # order in decreasing depth
         indices = np.arange(depth.shape[0])
@@ -97,14 +104,18 @@ class LidarDataConverter:
             os.makedirs(save_dir)
         np.save(os.path.join(save_dir, "idx.npy"), self.proj_idx)
         np.save(os.path.join(save_dir, "range.npy"), self.proj_range)
+        np.save(os.path.join(save_dir, "un_proj_range.npy"), self.un_proj_range)
         np.save(os.path.join(save_dir, "valid_mask.npy"), self.proj_mask)
-        np.save(os.path.join(save_dir, "xyz.npy"), self.points)
+        np.save(os.path.join(save_dir, "xyz_sorted.npy"), self.points)
+        np.save(os.path.join(save_dir, "xyz.npy"), self.proj_xyz)
+        np.save(os.path.join(save_dir, "un_proj_xyz.npy"), self.un_proj_xyz)
         np.save(os.path.join(save_dir, "initial_flow.npy"), self.initial_flow)
         if self.generate_gt:
             world_points = convert_to_world_frame(
                 self.points, timestamp_data, current_pose, next_pose, self.rotation_l2i, self.translation_l2i)
             np.save(os.path.join(save_dir, "world_frame.npy"), np.array(world_points))
         self.reset()
+        return save_dir
 
 
 class Imu2World:
@@ -256,10 +267,14 @@ def get_pixel_match(source, target, nearest_distance):
 
 def map_points_xy(idx, valid_mask, no_of_points):
     source_x_y = np.full((no_of_points, 2), np.nan)
-    valid_idx = np.argwhere(np.invert(valid_mask))
-    valid_val = idx[valid_idx[:, 0], valid_idx[:, 1]]
-    sort_id = np.argsort(valid_val)
-    source_x_y[valid_val[sort_id]] = valid_idx[sort_id]
+    # valid_idx = np.argwhere(np.invert(valid_mask))
+    # valid_val = idx[valid_idx[:, 0], valid_idx[:, 1]]
+    # sort_id = np.argsort(valid_val)
+    # source_x_y[valid_val[sort_id]] = valid_idx[sort_id]
+    valid_idx = np.where(idx != -1)
+    valid_val = idx[valid_idx[0], valid_idx[1]]
+    source_x_y[valid_val, 0] = valid_idx[0]
+    source_x_y[valid_val, 1] = valid_idx[1]
     return source_x_y
 
 
@@ -274,11 +289,15 @@ def build_flow(source_idx, target_idx, indices, n_mask):
     diff_x = t_idx[:, 0] - s_idx[:, 0]
     diff_y = t_idx[:, 1] - s_idx[:, 1]
 
-    mask = (np.isnan(diff_x)) | (np.isnan(diff_y)) | np.invert(n_mask)
+    # mask = (np.isnan(diff_x)) | (np.isnan(diff_y)) | np.invert(n_mask)
+    # s_idx = s_idx[np.invert(mask)].astype(int)
+    # diff_x = diff_x[np.invert(mask)].astype(int)
+    # diff_y = diff_y[np.invert(mask)].astype(int)
+    mask = np.invert(np.isnan(diff_x)) & np.invert(np.isnan(diff_y)) & n_mask
+    s_idx = s_idx[mask].astype(int)
+    diff_x = diff_x[mask].astype(int)
+    diff_y = diff_y[mask].astype(int)
 
-    s_idx = s_idx[np.invert(mask)].astype(int)
-    diff_x = diff_x[np.invert(mask)].astype(int)
-    diff_y = diff_y[np.invert(mask)].astype(int)
     x = s_idx[:, 0]
     y = s_idx[:, 1]
 

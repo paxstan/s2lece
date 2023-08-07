@@ -3,10 +3,11 @@ from tqdm import tqdm
 import wandb
 import torch.nn.functional as F
 import torch.optim.lr_scheduler as toptim
-from models.utils import s2lece_loss_criterion, ae_loss_criterion
+from models.model_utils import s2lece_loss_criterion, ae_loss_criterion, CustomMSELoss
 from visualization.visualization import compare_flow, show_visual_progress
 import os
 import logging
+from torch.cuda.amp import GradScaler
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -33,6 +34,7 @@ class Train:
             "architecture": model_type,
             "dataset": "Hilti exp04",
             "epochs": self.epochs,
+            "run_id": run_paths['path_model_id']
         }
         self.enable_wandb = config[model_type]['enable_wandb']
 
@@ -56,7 +58,7 @@ class Train:
                 wandb.log(result)
             if result['val loss'] < self.best_loss or result["epoch"] == 0:
                 self.best_loss = result['val loss']
-                print(f"best loss: {self.best_loss}")
+                logging.info(f"best loss: {self.best_loss}")
                 torch.save({
                     'epoch': result['epoch'] + 1,
                     'model_state_dict': self.net.state_dict(),
@@ -138,6 +140,7 @@ class TrainAutoEncoder(Train):
         super().__init__(net=net, config=config, run_paths=run_paths, is_cuda=is_cuda, model_type="autoencoder")
         self.dataloader = train_loader
         self.val_loader = val_loader
+        self.loss_func = CustomMSELoss()
         self.train_dicts = []
         self.train_dicts.append({'params': self.net.encoder.parameters()})
         self.train_dicts.append({'params': self.net.decoder.parameters()})
@@ -152,10 +155,10 @@ class TrainAutoEncoder(Train):
         up_steps = int(config["autoencoder"]["wup_epochs"] * steps_per_epoch)
         final_decay = config["autoencoder"]["lr_decay"] ** (1 / steps_per_epoch)
         self.scheduler = warmupLR(optimizer=self.optimizer,
-                                  lr=config["autoencoder"]["learning_rate"],
-                                  warmup_steps=up_steps,
-                                  momentum=config["autoencoder"]["momentum"],
-                                  decay=final_decay)
+                                 lr=config["autoencoder"]["learning_rate"],
+                                 warmup_steps=up_steps,
+                                 momentum=config["autoencoder"]["momentum"],
+                                 decay=final_decay)
         checkpoint = self.load_checkpoint(self.ckpt_path)
         self.start_epoch = 0
         if checkpoint is None:
@@ -178,62 +181,108 @@ class TrainAutoEncoder(Train):
         return recon_loss
 
     def train_epoch(self):
-        train_losses = []
         image_title = ""
-
         for i in range(self.start_epoch, self.epochs):
             self.net.train()
+            train_losses = 0.0
             for idx, inputs in enumerate(tqdm(self.dataloader)):
+                path = inputs.pop('path')
                 inputs = self.todevice(inputs)
                 img = inputs.pop('img')
                 mask = inputs.pop('mask')
-                self.optimizer.zero_grad()
                 pred = self.net(img)
-                loss = self.loss_fn(pred, img, mask)
+                loss = self.loss_func(pred, img, mask)
+                if torch.isinf(loss) or torch.isnan(loss):
+                    print(loss)
+                    print(path)
+                self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-                train_losses.append(loss.detach().item())
-                del loss, pred
-                torch.cuda.empty_cache()
+                train_losses += loss.detach().item()
+                # del loss, pred
+                # torch.cuda.empty_cache()
             if self.title:
                 image_title = f'{self.title} - Epoch {i}'
-            self.train_loss = (sum(train_losses) / len(train_losses))
-            self.evaluate_autoencoder(title=image_title)
-            yield {"train loss": self.train_loss, "val loss": self.val_loss, "epoch": i}
+            before_lr = self.optimizer.param_groups[0]["lr"]
             self.scheduler.step()
+            after_lr = self.optimizer.param_groups[0]["lr"]
+            logging.info("Epoch %d: SGD lr %.4f -> %.4f" % (i, before_lr, after_lr))
+            self.train_loss = train_losses / len(self.dataloader)
+            self.evaluate_autoencoder(title=image_title, epoch=i)
+            yield {"train (running) loss": self.train_loss, "val loss": self.val_loss, "epoch": i}
 
-    def evaluate_autoencoder(self, title, progress_view=True):
-        losses = []
+    def evaluate_autoencoder(self, title, epoch, progress_view=True):
+        logging.info(f"evaluation at epoch: {epoch}")
+        losses = 0.0
+        val_losses = 0.0
         self.net.eval()
-        with torch.no_grad():
-            for idx, batch in enumerate(self.val_loader):
-                batch = self.todevice(batch)
-                img = batch.pop('img')
-                mask = batch.pop('mask')
-                pred = self.net(img)
-                loss = self.loss_fn(pred, img, mask)
-                losses.append(loss.detach().item())
-                if progress_view:
-                    show_visual_progress(img, pred, self.progress_path, title=title, loss=loss)
-                    progress_view = False
-                del loss, pred
-                torch.cuda.empty_cache()
-        self.val_loss = sum(losses) / len(losses)
+        for idx, batch in enumerate(tqdm(self.dataloader)):
+            path = batch.pop('path')
+            batch = self.todevice(batch)
+            img = batch.pop('img')
+            mask = batch.pop('mask')
+            pred = self.net(img)
+            loss = self.loss_func(pred, img, mask)
+            losses += loss.detach().item()
+            if torch.isinf(loss) or torch.isnan(loss):
+                print(loss)
+                print(path)
+        for idx, batch in enumerate(tqdm(self.val_loader)):
+            path = batch.pop('path')
+            batch = self.todevice(batch)
+            img = batch.pop('img')
+            mask = batch.pop('mask')
+            pred = self.net(img)
+            loss = self.loss_func(pred, img, mask)
+            val_losses += loss.detach().item()
+            if torch.isinf(loss) or torch.isnan(loss):
+                print(loss)
+                print(path)
+            if progress_view:
+                show_visual_progress(img, pred, self.progress_path, title=title, loss=loss)
+                progress_view = False
+        # with torch.no_grad():
+
+        # del loss, pred
+        # torch.cuda.empty_cache()
+        print(f"validation training dataset: {losses / len(self.dataloader)}")
+        self.val_loss = val_losses / len(self.val_loader)
 
 
 class TrainSleceNet(Train):
-    def __init__(self, net, dataloader, test_dataloader, config, run_paths, is_cuda=False):
+    def __init__(self, net, dataloader, test_dataloader, config, run_paths, device, is_cuda=False):
         super().__init__(net=net, config=config, run_paths=run_paths, is_cuda=is_cuda, model_type="s2lece")
+        self.device = device
         self.dataloader = dataloader
         self.test_dataloader = test_dataloader
-        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate)
-        # self.optimizer = torch.optim.AdamW(self.net.parameters(),
-        #                                    lr=self.learning_rate, weight_decay=self.weight_decay,
-        #                                    eps=self.epsilon)
+        # self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.learning_rate)
+        self.mixed_precision = config["s2lece"]["mixed_precision"]
+        steps_per_epoch = len(self.dataloader)
+        self.train_dicts = []
+        self.train_dicts.append({'params': self.net.encoder.parameters()})
+        self.train_dicts.append({'params': self.net.context_net.parameters()})
+        self.train_dicts.append({'params': self.net.update.parameters()})
+        # self.optimizer = torch.optim.AdamW(self.train_dicts,
+        #                                   lr=self.learning_rate, weight_decay=float(config["s2lece"]["weight_decay"]),
+        #                                    eps=float(config["s2lece"]["epsilon"]))
+        self.optimizer = torch.optim.SGD(self.train_dicts,
+                                         lr=config["s2lece"]["learning_rate"],
+                                         momentum=config["s2lece"]["momentum"],
+                                         weight_decay=config["s2lece"]["weight_decay"])
         # self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer,
-        #                                                      self.learning_rate, args.num_steps + 100,
+        #                                                      self.learning_rate, steps_per_epoch,
         #                                                      pct_start=0.05, cycle_momentum=False,
         #                                                      anneal_strategy='linear')
+        steps_per_epoch = len(self.dataloader)
+        up_steps = int(config["s2lece"]["wup_epochs"] * steps_per_epoch)
+        final_decay = config["s2lece"]["lr_decay"] ** (1 / steps_per_epoch)
+        self.scheduler = warmupLR(optimizer=self.optimizer,
+                                  lr=config["s2lece"]["learning_rate"],
+                                  warmup_steps=up_steps,
+                                  momentum=config["s2lece"]["momentum"],
+                                  decay=final_decay)
+        # self.scaler = GradScaler(enabled=self.mixed_precision)
+        self.clip = config["s2lece"]["clip"]
         checkpoint = self.load_checkpoint(self.ckpt_path)
         if checkpoint is None:
             self.start_epoch = 0
@@ -244,33 +293,6 @@ class TrainSleceNet(Train):
             self.net.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
-    # def train(self):
-    #     wandb.init(
-    #         # set the wandb project where this run will be logged
-    #         project="s2lece",
-    #
-    #         # track hyperparameters and run metadata
-    #         config=self.wandb_config
-    #     )
-    #     for result in self.train_epoch():
-    #         log = f"epoch: {result['epoch'] + 1}, train loss: {result['train loss']}, val loss: {result['val loss']}"
-    #         print(log)
-    #         logging.info(log)
-    #         wandb.log(result)
-    #         if result['epoch'] % self.ckpt_interval == 0:
-    #             logging.info(f"Saving checkpoint at epoch {result['epoch'] + 1}.")
-    #             torch.save({
-    #                 'epoch': result['epoch'] + 1,
-    #                 'model_state_dict': self.net.state_dict(),
-    #                 'optimizer_state_dict': self.optimizer.state_dict(),
-    #                 'loss': self.train_loss,
-    #             }, os.path.join(self.ckpt_path, f"ckpts_{result['epoch'] + 1}.pt"))
-    #     torch.save({'net': 'SleceNet', 'state_dict': self.net.state_dict()}, self.save_path)
-    #     log = f"Saved model to {self.save_path}"
-    #     print(log)
-    #     logging.info(log)
-    #     wandb.finish()
-
     def train_epoch(self):
         train_losses = []
         for i in range(self.start_epoch, self.epochs):
@@ -280,16 +302,25 @@ class TrainSleceNet(Train):
                 img1 = inputs.pop('img1')
                 img2 = inputs.pop('img2')
                 target_flow = inputs.pop('flow')
-                initial_flow = inputs.pop('initial_flow')
-                mask = inputs.pop('mask')
+                mask1 = inputs.pop('mask1')
                 pred_flow = self.net(img1, img2)
-                pred_flow[:, 0] = pred_flow[:, 0] * mask[:, 0]
-                pred_flow[:, 1] = pred_flow[:, 1] * mask[:, 0]
-                flow_loss, metrics = loss_criterion(initial_flow, pred_flow, target_flow, mask)
+                # pred_flow *= mask1
+                flow_loss, metrics = s2lece_loss_criterion(pred_flow, target_flow)
+                # logging.info(metrics)
+                # with torch.autocast(device_type=self.device, enabled=self.mixed_precision):
+                #     pred_flow = self.net(img1, img2)
+                #     pred_flow *= mask1
+                #     flow_loss, metrics = s2lece_loss_criterion(pred_flow, target_flow)
 
                 self.optimizer.zero_grad()
                 flow_loss.backward()
+                # self.scaler.scale(flow_loss).backward()
+                # self.scaler.unscale_(self.optimizer)
+                # torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.clip)
+                # self.scaler.step(self.optimizer)
                 self.optimizer.step()
+                # self.scheduler.step()
+                # self.scaler.update()
 
                 loss = flow_loss.detach().item()
                 train_losses.append(loss)
@@ -298,27 +329,33 @@ class TrainSleceNet(Train):
 
             # print(f"train has nan: {has_nan(train_losses)}")
             # print(f"train has sum: {train_losses}")
+            before_lr = self.optimizer.param_groups[0]["lr"]
+            after_lr = self.optimizer.param_groups[0]["lr"]
+            self.scheduler.step()
+            logging.info("Epoch %d: SGD lr %.6f -> %.6f" % (i, before_lr, after_lr))
             self.train_loss = (sum(train_losses) / len(train_losses))
             self.evaluate_slece(i_epoch=i)
             yield {"train loss": self.train_loss, "val loss": self.val_loss, "epoch": i}
 
-    def evaluate_slece(self, i_epoch):
+    def evaluate_slece(self, i_epoch, progress_view=True):
+        logging.info(f"evaluation at epoch: {i_epoch}")
         losses = []
         self.net.eval()
         with torch.no_grad():
-            for idx, inputs in enumerate(self.test_dataloader):
+            for idx, inputs in enumerate(tqdm(self.test_dataloader)):
                 inputs = self.todevice(inputs)
                 img1 = inputs.pop('img1')
                 img2 = inputs.pop('img2')
                 target_flow = inputs.pop('flow')
-                initial_flow = inputs.pop('initial_flow')
-                mask = inputs.pop('mask')
+                mask1 = inputs.pop('mask1')
                 pred_flow = self.net(img1, img2)
-                pred_flow[:, 0] = pred_flow[:, 0] * mask[:, 0]
-                pred_flow[:, 1] = pred_flow[:, 1] * mask[:, 0]
-                flow_loss, metrics = loss_criterion(initial_flow, pred_flow, target_flow, mask=mask, train=False)
-                if idx == 1:
+                pred_flow *= mask1
+                # pred_flow[:, 0] = pred_flow[:, 0] * mask[:, 0]
+                # pred_flow[:, 1] = pred_flow[:, 1] * mask[:, 0]
+                flow_loss, metrics = s2lece_loss_criterion(pred_flow, target_flow, train=False)
+                if progress_view:
                     compare_flow(target_flow, pred_flow, self.progress_path, loss=flow_loss, idx=i_epoch)
+                    progress_view = False
                 losses.append(flow_loss.detach().item())
 
         # print(f"val has nan: {has_nan(losses)}")

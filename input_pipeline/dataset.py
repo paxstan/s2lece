@@ -9,6 +9,7 @@ import torchvision.transforms as tvf
 
 to_tensor = tvf.Compose([tvf.ToTensor()])
 
+
 # class Dataset(object):
 #     """ Base class for a dataset. To be overloaded.
 #     """
@@ -92,11 +93,11 @@ class RealPairDataset(LidarBase):
         mask1 = np.load(os.path.join(self.root, source, 'valid_mask.npy'))
         mask2 = np.load(os.path.join(self.root, target, 'valid_mask.npy'))
 
-        idx1 = self.load_np_file(os.path.join(self.root, source, 'idx.npy'))
-        idx2 = self.load_np_file(os.path.join(self.root, target, 'idx.npy'))
-
-        xyz1 = self.load_np_file(os.path.join(self.root, source, 'xyz.npy'))
-        xyz2 = self.load_np_file(os.path.join(self.root, target, 'xyz.npy'))
+        # idx1 = self.load_np_file(os.path.join(self.root, source, 'idx.npy'))
+        # idx2 = self.load_np_file(os.path.join(self.root, target, 'idx.npy'))
+        #
+        # xyz1 = self.load_np_file(os.path.join(self.root, source, 'xyz.npy'))
+        # xyz2 = self.load_np_file(os.path.join(self.root, target, 'xyz.npy'))
 
         flow = self.load_np_file(os.path.join(self.root, "correspondence", corres_dir, 'flow.npy'))
         initial_flow = self.load_np_file(os.path.join(self.root, source, 'initial_flow.npy'))
@@ -182,6 +183,8 @@ class SingleDataset(LidarBase):
         LidarBase.__init__(self, root)
         self.root = root
         self.npairs = self.get_count()
+        self.sensor_img_means = np.array([5.7224, -0.3047, -1.8498, 0.42288], dtype=float)
+        self.sensor_img_stds = np.array([11.8312, 1.1713, 9.0264, 9.2832], dtype=float)
 
     def get_count(self):
         abspath = os.path.abspath(self.root)
@@ -193,12 +196,61 @@ class SingleDataset(LidarBase):
 
     def __getitem__(self, idx):
         img = self.load_np_file(os.path.join(self.root, str(idx), 'range.npy'))
+        # xyz = self.load_np_file(os.path.join(self.root, str(idx), 'xyz.npy'))
+        # un_proj_img = self.load_np_file(os.path.join(self.root, str(idx), 'un_proj_range.npy'))
+        # un_proj_xyz = self.load_np_file(os.path.join(self.root, str(idx), 'un_proj_xyz.npy'))
         mask = self.load_np_file(os.path.join(self.root, str(idx), 'valid_mask.npy'))
+
+        # img = torch.from_numpy(img).clone()
+        # xyz = torch.from_numpy(xyz).clone()
+        # mask = torch.from_numpy(mask).clone()
         img = img * mask
         img[img == -0.0] = 0.0
+
+        # img[mask.astype(bool)] = (img[mask.astype(bool)] - self.sensor_img_means) / self.sensor_img_stds
+        # img = (img - self.sensor_img_means[0]) / self.sensor_img_stds[0]
+
+        # img_pp = img[mask.astype(bool)]
+        # img[mask.astype(bool)] = (img[mask.astype(bool)] - img_pp.mean()) / img_pp.std()
+
+        # img = histogram_equalization(img)
+
+        # result = dict(
+        #     img=to_tensor(img).to(torch.float32),
+        #     mask=to_tensor(mask),
+        #     path=os.path.join(self.root, str(idx))
+        # )
+
+        # proj = torch.cat([img.unsqueeze(0).clone(),
+        #                   xyz.clone().permute(2, 0, 1)])
+        #
+        # proj = (proj - self.sensor_img_means[:, None, None]) / self.sensor_img_stds[:, None, None]
+
+        # result = dict(
+        #     un_proj_img=un_proj_img,
+        #     un_proj_xyz=un_proj_xyz
+        # )
 
         result = dict(
             img=to_tensor(img).to(torch.float32),
             mask=to_tensor(mask),
+            path=os.path.join(self.root, str(idx))
         )
         return result
+
+
+def histogram_equalization(image):
+    # Compute the histogram
+    hist, bins = np.histogram(image.flatten(), 256, [0, 256])
+
+    # Compute the Cumulative Distribution Function (CDF)
+    cdf = hist.cumsum()
+    cdf_normalized = cdf * hist.max() / cdf.max()
+
+    # Intensity transformation function
+    equalized_values = (cdf_normalized[image] * 255).astype('uint8')
+
+    # Create the equalized image
+    equalized_image = np.reshape(equalized_values, image.shape)
+
+    return equalized_image

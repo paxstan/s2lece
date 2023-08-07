@@ -3,7 +3,8 @@ from matplotlib import pyplot as plt
 from input_pipeline.dataloader import normalize_img
 import numpy as np
 import torch
-from models.utils import s2lece_loss_criterion, ae_loss_criterion
+from models.model_utils import s2lece_loss_criterion, patch_mse_loss, ae_loss_criterion
+from utils import pytorch_ssim
 import torch.nn.functional as F
 import torch.nn as nn
 
@@ -35,6 +36,7 @@ def evaluate(net, img1, img2, flow=None, valid_mask=None, idx=None, metadata=Non
 
 
 def test_network(type_net, dataloader, net):
+    ssim_loss = pytorch_ssim.SSIM(window_size=16)
     with torch.no_grad():
         if type_net == "ae":
             max_count = len(dataloader)
@@ -44,8 +46,10 @@ def test_network(type_net, dataloader, net):
                 img = torch.unsqueeze(torch.tensor(img), 0)
                 mask = torch.unsqueeze(torch.tensor(mask), 0)
                 pred_img = net(img)
+                ssim_metric = ssim_loss(img, pred_img)
                 # recon_loss = F.mse_loss(pred_img, img, reduction='mean')
-                loss = ae_loss_criterion(pred_img, img, mask)
+                patch_loss = patch_mse_loss(img, pred_img)
+                mse_loss = ae_loss_criterion(pred_img, img, mask)
                 print("loss:", loss.item())
 
                 if idx == max_count - 1:
@@ -53,7 +57,7 @@ def test_network(type_net, dataloader, net):
 
         elif type_net == "s2lece":
             for idx, input_data in enumerate(dataloader):
-                if idx < 10:
+                if idx < 50:
                     img1 = input_data.pop('img1')
                     img2 = input_data.pop('img2')
                     flow = input_data.pop('flow')
@@ -67,16 +71,19 @@ def test_network(type_net, dataloader, net):
                     target_flow = torch.unsqueeze(torch.tensor(flow), 0)
                     initial_flow = torch.unsqueeze(torch.tensor(initial_flow), 0)
                     # flow_valid_mask = torch.unsqueeze(torch.tensor(flow_valid_mask), 0)
-                    # mask1 = torch.unsqueeze(torch.tensor(mask1), 0)
-                    # mask2 = torch.unsqueeze(torch.tensor(mask2), 0)
+                    mask1 = torch.unsqueeze(torch.tensor(mask1), 0)
+                    mask2 = torch.unsqueeze(torch.tensor(mask2), 0)
                     pred_flow = net(img1, img2)
-                    pred_flow[:, 0] = pred_flow[:, 0] * mask
-                    pred_flow[:, 1] = pred_flow[:, 1] * mask
-                    pred_flow = np.round(pred_flow)
+                    pred_flow *= mask1
+                    pred_flow = torch.round(pred_flow)
+                    # pred_flow[:, 0] = pred_flow[:, 0] * mask1
+                    # pred_flow[:, 1] = pred_flow[:, 1] * mask1
+                    # pred_flow = np.round(pred_flow)
                     flow_loss, metrics, = s2lece_loss_criterion(pred_flow, target_flow, train=False)
                     print(flow_loss)
                     print(metrics)
-                    compare_flow(target_flow, pred_flow, loss=flow_loss, path="/home/paxstan/Documents/research_project/code")
+                    compare_flow(target_flow, pred_flow, loss=flow_loss, idx=idx,
+                                 path="/home/paxstan/Documents/research_project/code")
 
                     # pred_last_np = np.floor(pred_flow[-1].detach().squeeze().numpy()).transpose(1, 2, 0).reshape(
                     #     32 * 1024, 2)

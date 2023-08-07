@@ -4,6 +4,7 @@ import torch
 from spatial_correlation_sampler import spatial_correlation_sample
 import math
 import os
+from utils import pytorch_ssim
 
 
 def coords_grid(batch, ht, wd, normalize=False):
@@ -171,27 +172,6 @@ def exp_position_embedding_sine(x, dim=128, NORMALIZE_FACOR=1 / 200):
                       torch.cos(x[..., -1:] * (NORMALIZE_FACOR * 2 ** freq_bands))], dim=-1)
 
 
-class NerfPositionalEncoding(nn.Module):
-    def __init__(self, depth=512, sine_type='lin_sine'):
-        '''
-        out_dim = in_dim * depth * 2
-        '''
-        super().__init__()
-        if sine_type == 'lin_sine':
-            self.bases = [i + 1 for i in range(depth)]
-        elif sine_type == 'exp_sine':
-            self.bases = [2 ** i for i in range(depth)]
-        print(f'using {sine_type} as positional encoding')
-
-    @torch.no_grad()
-    def forward(self, inputs):
-        out = torch.cat(
-            [torch.sin(i * math.pi * inputs) for i in self.bases] + [torch.cos(i * math.pi * inputs) for i in
-                                                                     self.bases], axis=-1)
-        assert torch.isnan(out).any() == False
-        return out
-
-
 class Correlation1D:
     def __init__(self, feature1, feature2,
                  radius=32,
@@ -324,13 +304,54 @@ class PositionEmbeddingSine(nn.Module):
 
 
 def ae_loss_criterion(pred_img, img, mask):
-    squared_diff = (pred_img - img) ** 2
-    squared_mask = squared_diff * mask
-    loss = torch.sum(squared_mask) / torch.sum(mask)
+    # squared_diff = (pred_img - img) ** 2
+    # squared_mask = squared_diff * mask
+    # loss = torch.sum(squared_mask) / torch.sum(mask)
+    criterion = nn.MSELoss()
+    # print(pred_img.shape, img.shape, mask.shape)
+    # pred_img = pred_img * mask
+    # img = img * mask
+    # print(pred_img.shape, img.shape, mask.shape)
+    loss = criterion(img, pred_img)
+    # print(loss)
     return loss
 
 
-def s2lece_loss_criterion(flow_pred, flow_gt, train=True):
+def patch_mse_loss(input_image, target_image, patch_size=16, reduction='mean'):
+    # Ensure the input images have the same shape
+    assert input_image.shape == target_image.shape, "Input and target images must have the same shape"
+
+    criterion = nn.MSELoss(reduction=reduction)
+    mse_value = 0.0
+    for i in range(input_image.size(2) - patch_size + 1):
+        for j in range(input_image.size(3) - patch_size + 1):
+            input_patch = input_image[:, :, i:i + patch_size, j:j + patch_size]
+            target_patch = target_image[:, :, i:i + patch_size, j:j + patch_size]
+            mse_value += criterion(input_patch, target_patch)
+
+    mse_value /= (input_image.size(2) - patch_size + 1) * (input_image.size(3) - patch_size + 1)
+
+    return mse_value
+
+
+class CustomMSELoss(nn.Module):
+    def __init__(self):
+        super(CustomMSELoss, self).__init__()
+
+    def forward(self, predicted, target, mask):
+        squared_diff = (predicted - target) ** 2
+        squared_mask = squared_diff * mask
+        loss = torch.sum(squared_mask) / torch.sum(mask)
+        # Calculate the squared difference between predicted and target
+        # squared_diff = (predicted - target) ** 2
+
+        # Compute the mean of the squared differences
+        # loss = torch.mean(squared_diff)
+
+        return loss
+
+
+def s2lece_loss_criterion(flow_pred, flow_gt, max_flow=400, train=True):
     # ae = AE()
     """ Loss function defined over sequence of flow predictions
      """
@@ -339,6 +360,11 @@ def s2lece_loss_criterion(flow_pred, flow_gt, train=True):
         torch.set_grad_enabled(False)
 
     flow_loss = torch.tensor(0.0, dtype=torch.float32).to(flow_gt.device)
+    mae_loss = torch.tensor(0.0, dtype=torch.float32).to(flow_gt.device)
+    rmse_loss = torch.tensor(0.0, dtype=torch.float32, requires_grad=False).to(flow_gt.device)
+    aae_loss = torch.tensor(0.0, dtype=torch.float32, requires_grad=False).to(flow_gt.device)
+    div_curl_loss = torch.tensor(0.0, dtype=torch.float32, requires_grad=False).to(flow_gt.device)
+    # epe = torch.tensor(0.0, dtype=torch.float32, requires_grad=False).to(flow_gt.device)
     # gt_flow = torch.floor(initial_flow + flow_gt).to(torch.int32)
     # valid_flow = ((gt_flow[:, 0] >= 0) & (gt_flow[:, 0] < 32)) & ((gt_flow[:, 1] >= 0) & (gt_flow[:, 1] < 2000))
     #
@@ -349,7 +375,14 @@ def s2lece_loss_criterion(flow_pred, flow_gt, train=True):
     # i_loss = (flow_pred - flow_gt).abs()
     # flow_loss += (valid_flow * i_loss).mean()
 
-    mask = (flow_gt != 0).float()
+    # mask = (flow_gt != 0)
+
+    # if torch.sum(mask) >= ((flow_gt.shape[2] * flow_gt.shape[3]) * 0.2):
+    mag = torch.sum(flow_gt ** 2, dim=1).sqrt()
+
+    # valid = mask & (mag < max_flow)[:, None]
+    valid = (mag < max_flow)
+    valid = valid.unsqueeze(1)
 
     # squared_diff = (flow_pred - flow_gt) ** 2
     #
@@ -357,37 +390,68 @@ def s2lece_loss_criterion(flow_pred, flow_gt, train=True):
     #
     # mse_loss = torch.sum(masked_square_diff) / torch.sum(mask)
 
-    rmse_loss = rmse_loss_fn(flow_pred, flow_gt, mask)
+    # flow_pred_rnd = torch.round(flow_pred)
 
-    aae_loss = average_angular_error_fn(flow_pred, flow_gt, mask)
+    rmse_loss += rmse_loss_fn(flow_pred, flow_gt, valid)
 
-    div_curl_loss = div_curl_loss_fn(flow_pred, flow_gt, mask, div_weight=1, curl_weight=1)
+    # aae_loss += average_angular_error_fn(flow_pred, flow_gt, valid)
+
+    div_curl_loss += div_curl_loss_fn(flow_pred, flow_gt, valid, div_weight=1, curl_weight=1)
+
+    # rmse_loss_rnd = rmse_loss_fn(flow_pred_rnd, flow_gt, mask)
+    #
+    # aae_loss_rnd = average_angular_error_fn(flow_pred_rnd, flow_gt, mask)
+    #
+    # div_curl_loss_rnd = div_curl_loss_fn(flow_pred_rnd, flow_gt, mask, div_weight=1, curl_weight=1)
 
     # gt_flow = flow_gt * valid_flow
     # pred_flow = flow_pred * valid_flow
 
-    flow_loss += (
-            torch.tensor(rmse_loss.clone().detach(), requires_grad=True if train else False) +
-            torch.tensor(aae_loss.clone().detach(), requires_grad=True if train else False) +
-            torch.tensor(div_curl_loss.clone().detach(), requires_grad=True if train else False))
+    # flow_loss += (
+    #         torch.tensor(rmse_loss.clone().detach(), requires_grad=True if train else False) +
+    #         torch.tensor(aae_loss.clone().detach(), requires_grad=True if train else False)
+    #         # + torch.tensor(div_curl_loss.clone().detach(), requires_grad=True if train else False)
+    #     )
+
+    # flow_loss_rnd += (
+    #         torch.tensor(rmse_loss_rnd.clone().detach(), requires_grad=True if train else False) +
+    #         torch.tensor(aae_loss_rnd.clone().detach(), requires_grad=True if train else False)
+    #         # +torch.tensor(div_curl_loss_rnd.clone().detach(), requires_grad=True if train else False)
+    # )
 
     # print(flow_loss)
 
+    # valid = valid[:, None]
+
     diff = (flow_pred - flow_gt).abs()
 
-    masked_diff = diff * mask
+    masked_diff = diff * valid
 
-    mae_loss = torch.sum(masked_diff) / torch.sum(mask)
+    mae_loss += torch.sum(masked_diff) / torch.sum(valid)
 
-    epe = torch.sum((flow_pred * mask - flow_gt * mask) ** 2, dim=1).sqrt()
+    # if (torch.sum(valid) >= ((flow_gt.shape[2] * flow_gt.shape[3]) * 0.1)) & (torch.isnan(mae_loss) is not True):
+    #     flow_loss += torch.tensor(mae_loss.clone().detach(), requires_grad=True if train else False)
+
+    epe = torch.sum((flow_pred * valid - flow_gt * valid) ** 2, dim=1).sqrt()
+
+    # sqrt_diff = (flow_pred - flow_gt).sqrt()
+    #
+    # masked_sqrt_diff = sqrt_diff * valid
+    #
+    # mse_loss = torch.sum(masked_sqrt_diff) / torch.sum(valid)
     # epe = epe * mask
+    mse_loss = F.mse_loss(flow_pred * valid, flow_gt * valid)
+    flow_loss += torch.tensor(mse_loss.clone().detach(), requires_grad=True if train else False)
 
     metrics = {
-        'mae': mae_loss,
-        'epe': torch.sum(epe) / torch.sum(mask),
-        '1px': torch.sum((epe > 1).float()) / torch.sum(mask),
-        '3px': torch.sum((epe > 3).float()) / torch.sum(mask),
-        '5px': torch.sum((epe > 5).float()) / torch.sum(mask)
+        'mae': mae_loss.item(),
+        'rmse': mse_loss.sqrt().item(),
+        'aae': aae_loss.item(),
+        'div_curl': div_curl_loss.item(),
+        'epe': (torch.sum(epe) / torch.sum(valid)).item(),
+        '1px': (torch.sum((epe > 1).float()) / torch.sum(valid)).item(),
+        '3px': (torch.sum((epe > 3).float()) / torch.sum(valid)).item(),
+        '5px': (torch.sum((epe > 5).float()) / torch.sum(valid)).item()
     }
 
     return flow_loss, metrics
@@ -424,6 +488,8 @@ def rmse_loss_fn(pred_flow, gt_flow, mask):
 
     rmse_loss = torch.sum(masked_rse_loss) / torch.sum(mask)
 
+    if torch.isnan(rmse_loss):
+        rmse_loss = torch.tensor(0.0)
     # rmse_loss = torch.sqrt(mse_loss)
 
     return rmse_loss
@@ -432,33 +498,34 @@ def rmse_loss_fn(pred_flow, gt_flow, mask):
 def average_angular_error_fn(pred_flow, gt_flow, mask):
     """Calculate the Average Angular Error (AAE) between predicted and ground truth flows."""
 
-    y_pred = pred_flow * mask
-    y_true = gt_flow * mask
-    dotP = torch.sum(y_pred * y_true, dim=1) + 1
-    Norm_pred = torch.sqrt(torch.sum(y_pred * y_pred, dim=1) + 1)
-    Norm_true = torch.sqrt(torch.sum(y_true * y_true, dim=1) + 1)
-    # ae = 180 / math.pi * torch.acos(dotP / (Norm_pred * Norm_true))
-    ae = 180 / math.pi * torch.acos(torch.clamp((dotP / (Norm_pred * Norm_true)), -1.0 + 1e-8, 1.0 - 1e-8))
+    y_pred = pred_flow[:, :, mask.squeeze()]
+    y_true = gt_flow[:, :, mask.squeeze()]
+    dotP = torch.sum(y_pred * y_true) + 1
+    Norm_pred = torch.sqrt(torch.sum(y_pred * y_pred) + 1)
+    Norm_true = torch.sqrt(torch.sum(y_true * y_true) + 1)
+    ae = 180 / math.pi * torch.acos(dotP / (Norm_pred * Norm_true))
+    # ae = 180 / math.pi * torch.acos(torch.clamp((dotP / (Norm_pred * Norm_true)), -1.0 + 1e-8, 1.0 - 1e-8))
 
     # ae_mean = torch.sum(ae) / torch.sum(mask)
     # return ae.mean(1).mean(1)
-    mean = ae.mean()
+    mean = ae / torch.sum(mask)
 
     if torch.isnan(mean):
-        print("nan!!!!")
         mean = torch.tensor(0.0)
     return mean
 
 
 def div_curl_loss_fn(pred_flow, gt_flow, mask, div_weight=0.8, curl_weight=0.2):
+    pred_flow = pred_flow * mask
+    gt_flow = gt_flow * mask
     div = compute_divergence(gt_flow)
     curl = compute_curl(gt_flow)
 
     div_hat = compute_divergence(pred_flow)
     curl_hat = compute_curl(pred_flow)
 
-    div_norm = torch.norm(div * mask - div_hat * mask)
-    curl_norm = torch.norm(curl * mask - curl_hat * mask)
+    div_norm = torch.norm(div - div_hat)
+    curl_norm = torch.norm(curl - curl_hat)
 
     div_curl = (div_weight * div_norm) + (curl_weight * curl_norm)
 
@@ -469,7 +536,8 @@ def div_curl_loss_fn(pred_flow, gt_flow, mask, div_weight=0.8, curl_weight=0.2):
     #
     # # Combine the divergence and curl losses
     # total_loss = divergence_loss + curl_loss
-
+    if torch.isnan(div_curl_loss):
+        div_curl_loss = torch.tensor(0.0)
     return div_curl_loss
 
 
@@ -540,13 +608,11 @@ def abs_flow_builder(initial_flow, pred_flow, idx1, idx2):
     return flow, mask_valid_in_2
 
 
-def load_encoder(feature_net, ae_path):
+def load_encoder_state_dict(feature_net, ae_path):
     if os.path.exists(ae_path):
         fe_net_weights = torch.load(ae_path)
         feature_net.load_state_dict(fe_net_weights["state_dict"])
-        for params in feature_net.parameters():
-            params.requires_grad = False
         print(f"AE Model loaded from {ae_path}")
     else:
         print(f"AE Model is not in the path {ae_path}")
-    return feature_net.encoder
+    return feature_net.encoder.state_dict()
