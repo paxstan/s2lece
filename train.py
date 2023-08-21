@@ -35,7 +35,7 @@ class Train:
         self.wandb_config = {
             "learning_rate": self.learning_rate,
             "architecture": model_type,
-            "dataset": "Hilti exp04",
+            "dataset": config["dataset"][config["datasets"][config["dataset_choice"]]],
             "epochs": self.epochs,
             "run_id": run_paths['path_model_id']
         }
@@ -153,11 +153,7 @@ class TrainAutoEncoder(Train):
         super().__init__(net=net, config=config, run_paths=run_paths, is_cuda=is_cuda, model_type="autoencoder")
         self.dataloader = train_loader
         self.val_loader = val_loader
-        self.train_dicts = []
-        self.train_dicts.append({'params': self.net.encoder.parameters()})
-        self.train_dicts.append({'params': self.net.decoder.parameters()})
-        self.train_dicts.append({'params': self.net.head.parameters()})
-        self.optimizer = torch.optim.SGD(self.train_dicts,
+        self.optimizer = torch.optim.SGD(self.net.parameters(),
                                          lr=config["autoencoder"]["learning_rate"],
                                          momentum=config["autoencoder"]["momentum"],
                                          weight_decay=config["autoencoder"]["weight_decay"])
@@ -217,7 +213,7 @@ class TrainAutoEncoder(Train):
         ssim_metric = self.ssim_loss(img, pred)
         return {"loss": patch_loss, "mse": mse_loss, "ssim": ssim_metric}
 
-    def train_epoch(self):
+    def train_step(self, epoch):
         image_title = ""
         for i in range(self.start_epoch, self.epochs):
             self.net.train()
@@ -321,11 +317,11 @@ class TrainSleceNet(Train):
                                            lr=self.learning_rate,
                                            eps=float(config["s2lece"]["epsilon"]))
         # weight_decay=float(config["s2lece"]["weight_decay"])
-        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer,
-                                                             max_lr=self.learning_rate, epochs=self.epochs,
-                                                             steps_per_epoch=steps_per_epoch,
-                                                             pct_start=0.05, cycle_momentum=False,
-                                                             anneal_strategy='linear')
+        # self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer,
+        #                                                      max_lr=self.learning_rate, epochs=self.epochs,
+        #                                                      steps_per_epoch=steps_per_epoch,
+        #                                                      pct_start=0.05, cycle_momentum=False,
+        #                                                      anneal_strategy='linear')
         # self.scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer=self.optimizer,
         #                                                    base_lr=self.learning_rate,
         #                                                    max_lr=self.learning_rate * 10, step_size_up=5,
@@ -393,16 +389,9 @@ class TrainSleceNet(Train):
             self.optimizer.zero_grad()
             flow_loss.backward()
             self.optimizer.step()
-            self.scheduler.step()
+            # self.scheduler.step()
 
             train_losses += flow_loss.detach().item()
-            # rmse_loss += metrics["flow"]["rmse loss"].detach().item()
-            # aae_loss += metrics["flow"]["aae loss"].detach().item()
-            # diff_loss += metrics["reconstruct"]["diff loss"].detach().item()
-            # ssim_loss += metrics["reconstruct"]["ssim loss"].detach().item()
-            # psnr_loss += metrics["reconstruct"]["psnr loss"].detach().item()
-            # mse_loss += metrics["reconstruct"]["mse loss"].detach().item()
-            # mask_loss += metrics["reconstruct"]["mask loss"].detach().item()
             del flow_loss
             torch.cuda.empty_cache()
 
@@ -460,11 +449,10 @@ class warmupLR(toptim.LRScheduler):
       LR exponentially.
   """
 
-    def __init__(self, optimizer, base_lr, max_lr, warmup_steps, momentum, decay):
+    def __init__(self, optimizer, lr, warmup_steps, momentum, decay):
         # cyclic params
         self.optimizer = optimizer
-        self.base_lrs = base_lr
-        self.lr = max_lr
+        self.lr = lr
         self.warmup_steps = warmup_steps
         self.momentum = momentum
         self.decay = decay

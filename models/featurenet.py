@@ -106,8 +106,8 @@ class FeatureExtractorNet(nn.Module):
                                          stride=self.strides[2], model_type=self.model_type, bn_d=self.bn_d)
         self.enc4 = self._make_enc_layer(BasicBlock, [8, 16], self.blocks[3],
                                          stride=self.strides[3], model_type=self.model_type, bn_d=self.bn_d)
-        self.enc5 = self._make_enc_layer(BasicBlock, [16, 32], self.blocks[4],
-                                         stride=self.strides[4], model_type=self.model_type, bn_d=self.bn_d)
+        # self.enc5 = self._make_enc_layer(BasicBlock, [16, 32], self.blocks[4],
+        #                                  stride=self.strides[4], model_type=self.model_type, bn_d=self.bn_d)
 
         # for a bit of fun
         self.dropout = nn.Dropout2d(self.drop_prob)
@@ -121,9 +121,9 @@ class FeatureExtractorNet(nn.Module):
         #  down sample
         layers = []
         layers.append(("conv", nn.Conv2d(planes[0], planes[1],
-                                     kernel_size=3,
-                                     stride=(1, stride), dilation=1,
-                                     padding=1, bias=False)))
+                                         kernel_size=3,
+                                         stride=(1, stride), dilation=1,
+                                         padding=1, bias=False)))
         if model_type == 'fe':
             layers.append(("instance", nn.InstanceNorm2d(planes[1], momentum=bn_d)))
 
@@ -179,6 +179,9 @@ class FeatureExtractorNet(nn.Module):
 
         x, skips, os = self.run_layer(x, self.enc4, skips, os)
         x, skips, os = self.run_layer(x, self.dropout, skips, os)
+
+        # x, skips, os = self.run_layer(x, self.enc5, skips, os)
+        # x, skips, os = self.run_layer(x, self.dropout, skips, os)
 
         return x, skips
 

@@ -26,7 +26,7 @@ class UpdateNet(nn.Module):
         # self.self_attn = True
         # self.corr_attn = None
         # self.flow_init = None
-        self.self_attention = SelfAttention(embed_dim=embedded_dim, in_channel=4000)
+        # self.self_attention = SelfAttention(embed_dim=embedded_dim, in_channel=4000)
 
         # self.cross_attention_16 = CrossAttention(embed_dim=embedded_dim,
         #                                          in_channel_source=32, in_channel_target=32)
@@ -35,54 +35,25 @@ class UpdateNet(nn.Module):
         #                                         context_dim=32,
         #                                         downsample_factor=4)
 
+        # self.update_block_32 = BasicUpdateBlock(corr_channels=27,
+        #                                         hidden_dim=32,
+        #                                         downsample_factor=4)
+
         self.update_block_16 = BasicUpdateBlock(corr_channels=243,
                                                 hidden_dim=16,
                                                 downsample_factor=16)  # 4
 
-        # self.cross_attention_4 = CrossAttention(embed_dim=embedded_dim // 4,
-        #                                         in_channel_source=32, in_channel_target=8)
-
-        # self.update_block_4 = BasicUpdateBlock(corr_channels=8,
-        #                                        hidden_dim=embedded_dim // 4,
-        #                                        context_dim=8,
+        # self.update_block_8 = BasicUpdateBlock(corr_channels=243,
+        #                                        hidden_dim=8,
+        #                                        downsample_factor=8)  # 4
+        #
+        # self.update_block_4 = BasicUpdateBlock(corr_channels=243,
+        #                                        hidden_dim=4,
         #                                        downsample_factor=4)
-        self.update_block_4 = BasicUpdateBlock(corr_channels=243,
-                                               hidden_dim=4,
-                                               downsample_factor=4)
-
-        # self.cross_attention_1 = CrossAttention(embed_dim=embedded_dim // 8,
-        #                                         in_channel_source=8, in_channel_target=2)
         #
-        # self.update_block_1 = BasicUpdateBlock(corr_channels=4,
-        #                                        hidden_dim=embedded_dim // 16,
-        #                                        context_dim=2,
+        # self.update_block_1 = BasicUpdateBlock(corr_channels=243,
+        #                                        hidden_dim=1,
         #                                        downsample_factor=4, learn_upsample=False)
-
-        self.update_block_1 = BasicUpdateBlock(corr_channels=243,
-                                               hidden_dim=1,
-                                               downsample_factor=4, learn_upsample=False)
-
-        # self.cross_attention = { 16: CrossAttention(embed_dim=self.embedded_dim, in_channel_source=32,
-        # in_channel_target=32),  # .to(device), 4: CrossAttention(embed_dim=self.embedded_dim // 4,
-        # in_channel_source=32, in_channel_target=8), # .to(device), 1: CrossAttention(embed_dim=self.embedded_dim //
-        # 8, in_channel_source=8, in_channel_target=2)  # .to(device)
-        #
-        # }
-        #
-        # self.update_block = {
-        #     16: BasicUpdateBlock(corr_channels=32,
-        #                          hidden_dim=self.embedded_dim,
-        #                          context_dim=32,
-        #                          downsample_factor=4),  # .to(device),
-        #     4: BasicUpdateBlock(corr_channels=8,
-        #                         hidden_dim=self.embedded_dim // 4,
-        #                         context_dim=self.embedded_dim // 4,
-        #                         downsample_factor=4),  # .to(device),
-        #     1: BasicUpdateBlock(corr_channels=4,
-        #                         hidden_dim=self.embedded_dim // 16,
-        #                         context_dim=self.embedded_dim // 16,
-        #                         downsample_factor=4, learn_upsample=False)  # .to(device)
-        #               }
 
     @staticmethod
     def initialize_flow(img, downsample=1):
@@ -168,18 +139,62 @@ class UpdateNet(nn.Module):
         coords1 = coords1.detach()  # stop gradient
         flow = coords1 - coords0
 
-        corr_fn = CorrBlock(feature1[0], feature2[0], radius=4)
+        corr_fn = CorrBlock(feature1[0], feature2[0], radius=1)
         corr = corr_fn(coords1)
         # corr_val = self.corr(feature1[0], feature2[0])
         # corr_attn = self.self_attention(feature1[0].size(), corr_val)
         # corr_attn = corr_attn.permute(0, 2, 1).view(feature1[0].size())
 
         # net, up_mask, delta_flow = self.update_block_16(net1[0], inp1[0], corr_attn, flow, upsample=True)
-        net, up_mask, delta_flow = self.update_block_16(net1[0], inp1[0], corr, flow, upsample=True)
+        net, up_mask, delta_flow = self.update_block_32(net1[0], inp1[0], corr, flow, upsample=True)
         coords1 = coords1 + delta_flow
         flow = coords1 - coords0
         # flow, corr_attn = self.learned_upflow(flow, corr_attn, up_mask, downsample=4)
-        flow, corr = self.learned_upflow(flow, corr, up_mask, downsample=16)
+        flow, corr = self.learned_upflow(flow, corr, up_mask, downsample=32)
+
+        # key 16
+        # # print("key 16")
+        # coords0, coords1 = self.initialize_flow(feature1[1])
+        # if flow_init is not None:  # flow_init is 1/8 resolution or 1/4
+        #     coords1 = coords1 + flow_init
+        #
+        # coords0 = coords0.detach()
+        # coords1 = coords1.detach()  # stop gradient
+        # flow = coords1 - coords0
+        #
+        # corr_fn = CorrBlock(feature1[1], feature2[1], radius=4)
+        # corr = corr_fn(coords1)
+        # # corr_val = self.corr(feature1[0], feature2[0])
+        # # corr_attn = self.self_attention(feature1[0].size(), corr_val)
+        # # corr_attn = corr_attn.permute(0, 2, 1).view(feature1[0].size())
+        #
+        # # net, up_mask, delta_flow = self.update_block_16(net1[0], inp1[0], corr_attn, flow, upsample=True)
+        # net, up_mask, delta_flow = self.update_block_16(net1[1], inp1[1], corr, flow, upsample=True)
+        # coords1 = coords1 + delta_flow
+        # flow = coords1 - coords0
+        # # flow, corr_attn = self.learned_upflow(flow, corr_attn, up_mask, downsample=4)
+        # flow, corr = self.learned_upflow(flow, corr, up_mask, downsample=16)
+
+        # key 8
+        # coords0, coords1 = self.initialize_flow(feature1[1])
+        #
+        # coords1 = coords1 + flow
+        # coords0 = coords0.detach()
+        # coords1 = coords1.detach()  # stop gradient
+        # flow = coords1 - coords0
+        #
+        # corr_fn = CorrBlock(feature1[1], feature2[1], radius=4)
+        # corr = corr_fn(coords1)
+        # # corr_val = self.corr(feature1[0], feature2[0])
+        # # corr_attn = self.self_attention(feature1[0].size(), corr_val)
+        # # corr_attn = corr_attn.permute(0, 2, 1).view(feature1[0].size())
+        #
+        # # net, up_mask, delta_flow = self.update_block_16(net1[0], inp1[0], corr_attn, flow, upsample=True)
+        # net, up_mask, delta_flow = self.update_block_8(net1[1], inp1[1], corr, flow, upsample=True)
+        # coords1 = coords1 + delta_flow
+        # flow = coords1 - coords0
+        # # flow, corr_attn = self.learned_upflow(flow, corr_attn, up_mask, downsample=4)
+        # flow, corr = self.learned_upflow(flow, corr, up_mask, downsample=8)
 
         # key 4
         # print("key 4")
@@ -235,7 +250,7 @@ class CorrBlock:
 
         self.corr_pyramid.append(corr)
         for i in range(self.num_levels - 1):
-            corr = F.avg_pool2d(corr, 2, stride=2)
+            corr = F.avg_pool2d(corr, 2, stride=(1, 2))
             self.corr_pyramid.append(corr)
 
     def __call__(self, coords):
@@ -293,7 +308,7 @@ class S2leceNet(nn.Module):
     def __init__(self, config, fe_params, update_params):
         super().__init__()
         self.config = config
-        self.keys = [16, 4, 1]
+        self.keys = [32, 8]
         # self.context_net = ContextNet().float()
         self.encoder = FeatureExtractorNet(fe_params)
         fe_params["type"] = "cn"
@@ -331,35 +346,19 @@ class S2leceNet(nn.Module):
         f1, x1_skips = self.encoder(x1)
         f2, x2_skips = self.encoder(x2)
         c1, c1_skips = self.context_net(x1)
-        x1_skips[16] = f1
-        x2_skips[16] = f2
-        c1_skips[16] = c1
+        x1_skips[32] = f1
+        x2_skips[32] = f2
+        c1_skips[32] = c1
 
         net1 = []
         inp1 = []
 
-        # keys = list(x1_skips.keys())
-        # keys.reverse()
-
         feature1 = list(map(x1_skips.get, self.keys))
         feature2 = list(map(x2_skips.get, self.keys))
         context1 = list(map(c1_skips.get, self.keys))
-        # net1 = list(map(net.get, self.keys))
-        # inp1 = list(map(inp.get, self.keys))
         for idx, value in enumerate(context1):
             net1.append(torch.tanh(value))
-            # print(net1[idx].shape)
             inp1.append(torch.relu(value))
-            # print(inp1[idx].shape)
 
-        # print("to the update...")
         pred_flow = self.update(feature1, feature2, net1, inp1, pred_flow)
-        # print("pred flow ready")
-        # for key in keys:
-        #     feature1 = x1_skips[key]
-        #     feature2 = x2_skips[key]
-        #     if key == keys[-1]:
-        #         upsample = False
-        #
-        #     pred_flow = self.update(pred_flow, feature1, feature2, net[key], inp[key], key, upsample=upsample)
         return pred_flow

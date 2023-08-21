@@ -66,29 +66,18 @@ def main(argv):
             full_dataset = ConcatDataset(combined_dataset)
             val_single_dt = SingleDataset(root=config["dataset"]["exp01"]['data_dir'])
 
-            # single_dt = SingleDataset(root=data_dir)
-            # val_single_dt = SingleDataset(root="../dataset/exp04")
-
-            # train_size = int(0.8 * len(full_dataset))  # 80% for training
-            # val_size = len(full_dataset) - train_size
-            #
-            # train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
-
             net = AutoEncoder(fe_params).to(device)
             # test_network("ae", full_dataset, net)
 
-            train_loader = threaded_loader(full_dataset, batch_size=4, iscuda=iscuda, threads=1)
-            val_loader = threaded_loader(val_single_dt, batch_size=4, iscuda=iscuda, threads=1, shuffle=False)
+            train_loader = threaded_loader(full_dataset, batch_size=config["autoencoder"]["batch_size"],
+                                           iscuda=iscuda, threads=1)
+            val_loader = threaded_loader(val_single_dt, batch_size=config["autoencoder"]["batch_size"],
+                                         iscuda=iscuda, threads=1, shuffle=False)
 
             if FLAGS.train:
                 train = TrainAutoEncoder(net=net, train_loader=train_loader, val_loader=val_loader,
                                          config=config, title="DarkNet", is_cuda=iscuda, run_paths=run_paths)
                 train()
-
-            elif FLAGS.tune:
-                tune = TuneS2leceNet(config, train_loader, val_loader, run_paths, iscuda, device)
-                tune()
-
             else:
                 evaluation(net, val_loader)
         else:

@@ -83,38 +83,40 @@ correspondence:
 # Auto encoder
 autoencoder:
   save_path: 'fe_ae_darknet_full.pt'
-  learning_rate: 0.001
-  weight_decay: 0.00001
+  learning_rate: 0.01
+  weight_decay: 0.0001
   momentum: 0.9          # sgd momentum
   epoch: 50
   wup_epochs: 1
   lr_decay: 0.995        # learning rate decay per epoch after initial cycle (from min lr)
+  epsilon: 0.001
   ckpt_interval: 10
   early_stopping: 10
+  batch_size: 4
   enable_wandb: True
   params:
     in_channel: 1
     dropout: 0.01
     bn_d: 0.01
-    OS: 16
+    OS: 32
     model: 21
     type: 'fe'
 
 # flow model
 s2lece:
-  save_path: 'slece_model_test_e5_new_opt.pt'
+  save_path: 'slece_model.pt'
   ae_path: '/home/paxstan/Documents/research_project/code/runs/run_2023-08-07T18-46-39-454227/fe_ae_darknet_full.pt'
   field_name: 'x, y, z, intensity'
   learning_rate: 0.001
   weight_decay: 0.00005
   mixed_precision: True
   clip: 1.0
-  epoch: 10
+  epoch: 50
   wup_epochs: 1
   batch_size: 4
-  ckpt_interval: 2
+  ckpt_interval: 10
   early_stopping: 10
-  enable_wandb: False
+  enable_wandb: True
   epsilon: 1e-8
   params:
     embedded_dim: 16
