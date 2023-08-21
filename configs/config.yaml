@@ -1,8 +1,8 @@
 #general
-train_fe: True
+train_fe: False
 gpu:
-  - -1
-dataset_choice: 4
+  - 0
+dataset_choice: 8
 datasets:
   - 'exp01'
   - 'exp02'
@@ -11,20 +11,35 @@ datasets:
   - 'exp05'
   - 'exp06'
   - 'synth_data'
+  - 'synth_data2'
+  - 'kitti_03'
 
 #dataset creation
 dataset:
+  kitti_03:
+    path: '../../data/kitti/03'
+    dataset_path: 'velodyne'
+    ros_bag: ''
+    ground_truth: '03_lidar_tum.txt'
+    data_dir: '../dataset/kitti_03'
+    generate_ground_truth: True
   synth_data:
     path: '../../data/hilti/rosbag/exp05_imu'
     ros_bag: 'exp05_construction_upper_level_2.bag'
     ground_truth: 'exp_05_construction_upper_level_2_imu.txt'
-    data_dir: '../dataset/synth_data2'
+    data_dir: '../dataset/synth_data_full'
+    generate_ground_truth: False
+  synth_data2:
+    path: '../../data/hilti/rosbag/exp05_imu'
+    ros_bag: 'exp05_construction_upper_level_2.bag'
+    ground_truth: 'exp_05_construction_upper_level_2_imu.txt'
+    data_dir: '../dataset/synth_data_full_new'
     generate_ground_truth: True
   exp05:
     path: '../../data/hilti/rosbag/exp05_imu'
     ros_bag: 'exp05_construction_upper_level_2.bag'
     ground_truth : 'exp_05_construction_upper_level_2_imu.txt'
-    data_dir: '../dataset/exp05_xyz2'
+    data_dir: '../dataset/exp05'
     generate_ground_truth: False
     mean: 5.2251
     std: 9.6430
@@ -60,69 +75,96 @@ dataset:
     generate_ground_truth: False
 
 correspondence:
-  nearest_neighbor: 0.2
+  nearest_neighbor: 1
   pair_distance:
     - 0.01
-    - 1
+    - 10
 
 # Auto encoder
 autoencoder:
   save_path: 'fe_ae_darknet_full.pt'
-  learning_rate: 0.01
-  weight_decay: 0.0001
+  learning_rate: 0.001
+  weight_decay: 0.00001
   momentum: 0.9          # sgd momentum
   epoch: 50
   wup_epochs: 1
   lr_decay: 0.995        # learning rate decay per epoch after initial cycle (from min lr)
   ckpt_interval: 10
   early_stopping: 10
-  enable_wandb: False
+  enable_wandb: True
   params:
     in_channel: 1
     dropout: 0.01
     bn_d: 0.01
     OS: 16
     model: 21
+    type: 'fe'
 
 # flow model
 s2lece:
   save_path: 'slece_model_test_e5_new_opt.pt'
+  ae_path: '/home/paxstan/Documents/research_project/code/runs/run_2023-08-07T18-46-39-454227/fe_ae_darknet_full.pt'
   field_name: 'x, y, z, intensity'
-  learning_rate: 0.01
-  weight_decay: 0.0001
-  momentum: 0.9          # sgd momentum
+  learning_rate: 0.001
+  weight_decay: 0.00005
   mixed_precision: True
   clip: 1.0
   epoch: 10
   wup_epochs: 1
-  lr_decay: 0.995        # learning rate decay per epoch after initial cycle (from min lr)
-  batch_size: 2
+  batch_size: 4
   ckpt_interval: 2
   early_stopping: 10
-  enable_wandb: True
+  enable_wandb: False
   epsilon: 1e-8
   params:
-    embedded_dim: 32
+    embedded_dim: 16
     dropout: 0.0
 
 #lidarparameter
 lidar_param:
-  height: 32 # from hilti 2022 benchmark paper
-  width: 2000
-  h_res: 0.18  # horizontal resolution (10Hz setting) - width
-  v_res: 1  # vertical res - height
-  v_fov: # Field of view (-ve, +ve) along vertical axis - height
-    down: -16
-    up: 15
+  hilti:
+    height: 32 # from hilti 2022 benchmark paper
+    width: 2000
+    h_res: 0.18  # horizontal resolution (10Hz setting) - width
+    v_res: 1  # vertical res - height
+    v_fov: # Field of view (-ve, +ve) along vertical axis - height
+      down: -16
+      up: 15
+    lidar_to_imu:
+      translation:
+        - -0.001
+        - -0.00855
+        - 0.055
+      rotation:
+        - 0.7071068
+        - -0.7071068
+        - 0
+        - 0
+  kitti:
+    height: 64
+    width: 2048
+    v_fov: # Field of view (-ve, +ve) along vertical axis - height
+      down: -24.9
+      up: 2
+    lidar_to_imu:
+      translation:
+        - 0
+        - 0
+        - 0
+      rotation:
+        - 0
+        - 0
+        - 0
+        - 0
 
 #imu_data
-lidar_to_imu:
-  translation :
-    - -0.001
-    - -0.00855
-    - 0.055
-  rotation :
-    - 0.7071068
-    - -0.7071068
-    - 0
-    - 0
+#lidar_to_imu:
+#  translation :
+#    - -0.001
+#    - -0.00855
+#    - 0.055
+#  rotation :
+#    - 0.7071068
+#    - -0.7071068
+#    - 0
+#    - 0

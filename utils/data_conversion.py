@@ -5,6 +5,7 @@ import copy
 from scipy.spatial.transform import Slerp, Rotation
 from scipy.interpolate import interp1d
 from scipy.spatial import cKDTree
+from visualization.visualization import flow_to_color
 
 
 class LidarDataConverter:
@@ -13,14 +14,15 @@ class LidarDataConverter:
     From LiDAR-bonnetal
     """
 
-    def __init__(self, lidar_param, lidar_2_imu, save_dir="data_dir", generate_gt=True):
+    def __init__(self, lidar_param, lidar_type, save_dir="data_dir", generate_gt=True):
         self.generate_gt = generate_gt
         self.proj_H = lidar_param["height"]
         self.proj_W = lidar_param["width"]
         self.proj_fov_up = lidar_param["v_fov"]["up"]
         self.proj_fov_down = lidar_param["v_fov"]["down"]
-        self.translation_l2i = np.array(lidar_2_imu["translation"])
-        self.rotation_l2i = np.array(lidar_2_imu["rotation"])
+        self.translation_l2i = np.array(lidar_param["lidar_to_imu"]["translation"])
+        self.rotation_l2i = np.array(lidar_param["lidar_to_imu"]["rotation"])
+        self.lidar_type = lidar_type
         self.save_dir = save_dir
         self.proj_x = None
         self.proj_y = None
@@ -71,7 +73,9 @@ class LidarDataConverter:
         return self.size()
 
     def point_cloud_to_np_array(self):
-        proj_x, proj_y, depth = project_point_cloud(self.points, height=self.proj_H, width=self.proj_W)
+        proj_x, proj_y, depth = project_point_cloud(self.points,
+                                                    height=self.proj_H, width=self.proj_W,
+                                                    fov_up=self.proj_fov_up, fov_down=self.proj_fov_down)
         self.proj_x = np.copy(proj_x)  # store a copy in orig order
         self.proj_y = np.copy(proj_y)  # store a copy in original order
         self.un_proj_range = np.copy(depth)
@@ -90,7 +94,7 @@ class LidarDataConverter:
         self.proj_range[proj_x, proj_y] = depth
         self.proj_xyz[proj_x, proj_y] = points
         self.proj_idx[proj_x, proj_y] = indices
-        self.proj_mask[proj_x, proj_y] = (self.proj_idx[proj_x, proj_y] > 0).astype(np.int32)
+        self.proj_mask[proj_x, proj_y] = (self.proj_idx[proj_x, proj_y] != -1).astype(np.int32)
         self.initial_flow[0, proj_x, proj_y] = proj_x
         self.initial_flow[1, proj_x, proj_y] = proj_y
 
@@ -102,18 +106,26 @@ class LidarDataConverter:
         save_dir = os.path.join(self.save_dir, str(num))
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
+        np.save(os.path.join(save_dir, "proj_x.npy"), self.proj_x)
+        np.save(os.path.join(save_dir, "proj_y.npy"), self.proj_y)
         np.save(os.path.join(save_dir, "idx.npy"), self.proj_idx)
         np.save(os.path.join(save_dir, "range.npy"), self.proj_range)
         np.save(os.path.join(save_dir, "un_proj_range.npy"), self.un_proj_range)
         np.save(os.path.join(save_dir, "valid_mask.npy"), self.proj_mask)
-        np.save(os.path.join(save_dir, "xyz_sorted.npy"), self.points)
+        np.save(os.path.join(save_dir, "proj_xyz_sorted.npy"), self.points)
         np.save(os.path.join(save_dir, "xyz.npy"), self.proj_xyz)
         np.save(os.path.join(save_dir, "un_proj_xyz.npy"), self.un_proj_xyz)
         np.save(os.path.join(save_dir, "initial_flow.npy"), self.initial_flow)
         if self.generate_gt:
             world_points = convert_to_world_frame(
-                self.points, timestamp_data, current_pose, next_pose, self.rotation_l2i, self.translation_l2i)
+                self.points, timestamp_data,
+                self.rotation_l2i, self.translation_l2i, self.lidar_type,
+                current_pose, next_pose
+            )
             np.save(os.path.join(save_dir, "world_frame.npy"), np.array(world_points))
+            w_frame = o3d.geometry.PointCloud()
+            w_frame.points = o3d.utility.Vector3dVector(world_points)
+            o3d.io.write_point_cloud(os.path.join(save_dir, "world_frame.pcd"), w_frame)
         self.reset()
         return save_dir
 
@@ -160,11 +172,11 @@ class Imu2World:
         return trans_interp
 
 
-def project_point_cloud(points, height=32, width=1024):
+def project_point_cloud(points, height=32, width=1024, fov_up=15, fov_down=-16):
     """ Projects 3D points from a 360° horizontal scan to a 2D image plane."""
 
-    fov_up = 15
-    fov_down = -16
+    # fov_up = 15
+    # fov_down = -16
     x_lidar = points[:, 0]
     y_lidar = points[:, 1]
     z_lidar = points[:, 2]
@@ -200,14 +212,24 @@ def project_point_cloud(points, height=32, width=1024):
     return proj_x, proj_y, depth
 
 
-def convert_to_world_frame(points, timestamp_data, current_pose, next_pose, rotation, translation):
-    l_pcd = o3d.geometry.PointCloud()
-    l_pcd.points = o3d.utility.Vector3dVector(points)
-    # transform from lidar frame to imu frame
-    i_pcd = pcd_transformation(copy.deepcopy(l_pcd), rotation, translation)
+def convert_to_world_frame(points, timestamp_data, rotation, translation, lidar_type, current_pose, next_pose=None):
+    world_points = None
+    if lidar_type == "hilti":
+        l_pcd = o3d.geometry.PointCloud()
+        l_pcd.points = o3d.utility.Vector3dVector(points)
+        # transform from lidar frame to imu frame
+        i_pcd = pcd_transformation(copy.deepcopy(l_pcd), rotation, translation)
+        imu2world = Imu2World(copy.deepcopy(i_pcd.points), current_pose, next_pose, timestamp_data)
+        world_points = imu2world.transform_pcd()
+    elif lidar_type == "kitti":
+        pose_translation = current_pose[1:4]
+        pose_rotation = current_pose[4:]
+        l_pcd = o3d.geometry.PointCloud()
+        l_pcd.points = o3d.utility.Vector3dVector(points)
+        # transform from lidar frame to imu frame
+        i_pcd = pcd_transformation(copy.deepcopy(l_pcd), pose_rotation, pose_translation)
+        world_points = i_pcd.points
 
-    imu2world = Imu2World(copy.deepcopy(i_pcd.points), current_pose, next_pose, timestamp_data)
-    world_points = imu2world.transform_pcd()
     return world_points
 
 
@@ -225,7 +247,8 @@ def pcd_transformation(pcd, rotation, translation):
     return pcd
 
 
-def get_pixel_match(source, target, nearest_distance):
+def get_pixel_match(source, target, nearest_distance, height, width):
+    csv_dict = dict()
     source_frame = np.load(os.path.join(source, 'world_frame.npy'))
     target_frame = np.load(os.path.join(target, 'world_frame.npy'))
 
@@ -238,31 +261,42 @@ def get_pixel_match(source, target, nearest_distance):
     source_x_y = map_points_xy(source_idx, source_mask, source_frame.shape[0])
     target_x_y = map_points_xy(target_idx, target_mask, target_frame.shape[0])
 
-    distances, corres = perform_kdtree(source_frame, target_frame)
+    distances, corres = perform_kdtree(source_frame, target_frame, threshold=nearest_distance)
+    csv_dict["correspondence"] = len(corres)
 
-    count = np.bincount(corres)
+    # count = np.bincount(corres)
+    #
+    # true_val = np.where(count == 1)[0]
+    # true_indices = [np.column_stack(np.where(corres == i)).ravel().tolist() for i in true_val]
+    # true_indices = np.array(true_indices)
+    # unique_mask = np.zeros_like(corres)
+    # unique_mask[true_indices] = 1
+    #
+    # non_unique = np.where(count > 1)[0]
+    # non_unique_pair = [[i, np.column_stack(np.where(corres == i)).ravel().tolist()] for i in non_unique]
+    # for i, val in enumerate(non_unique_pair):
+    #     min_distance_id = distances[val[1]].argmin()
+    #     unique_mask[val[1][min_distance_id]] = 1
+    #
+    # unique_mask = unique_mask.astype(bool)
+    #
+    neighbour_mask = distances != np.inf
 
-    true_val = np.where(count == 1)[0]
-    true_indices = [np.column_stack(np.where(corres == i)).ravel().tolist() for i in true_val]
-    true_indices = np.array(true_indices)
-    unique_mask = np.zeros_like(corres)
-    unique_mask[true_indices] = 1
+    mask = neighbour_mask  # * unique_mask
 
-    non_unique = np.where(count > 1)[0]
-    non_unique_pair = [[i, np.column_stack(np.where(corres == i)).ravel().tolist()] for i in non_unique]
-    for i, val in enumerate(non_unique_pair):
-        min_distance_id = distances[val[1]].argmin()
-        unique_mask[val[1][min_distance_id]] = 1
+    csv_dict["neighbours"] = np.count_nonzero(neighbour_mask.astype(int))
+    # csv_dict["unique"] = np.count_nonzero(unique_mask.astype(int))
+    csv_dict["valid (neighbor and unique)"] = np.count_nonzero(mask.astype(int))
 
-    unique_mask = unique_mask.astype(bool)
+    flow, flow_img = build_flow(source_x_y, target_x_y, corres, mask, height, width)
 
-    neighbour_mask = distances <= nearest_distance
+    pixel_count = flow.shape[1] * flow.shape[2]
+    csv_dict[f"non zero flow along x (out of {pixel_count} pixels)"] = np.count_nonzero(flow[0])
+    csv_dict[f"non zero flow along x in percent"] = round(((np.count_nonzero(flow[0]) / pixel_count) * 100), 4)
+    csv_dict[f"non zero flow along y (out of {pixel_count} pixels)"] = np.count_nonzero(flow[1])
+    csv_dict[f"non zero flow y in percent"] = round(((np.count_nonzero(flow[1]) / pixel_count) * 100), 4)
 
-    mask = neighbour_mask * unique_mask
-
-    flow = build_flow(source_x_y, target_x_y, corres, mask)
-
-    return flow
+    return flow, flow_img, [csv_dict]
 
 
 def map_points_xy(idx, valid_mask, no_of_points):
@@ -278,13 +312,13 @@ def map_points_xy(idx, valid_mask, no_of_points):
     return source_x_y
 
 
-def build_flow(source_idx, target_idx, indices, n_mask):
-    s_idx = source_idx
+def build_flow(source_idx, target_idx, indices, n_mask, height, width):
+    s_idx = source_idx[n_mask]
     # s_flow = np.zeros((2, 32, 2000))
     # s_flow[0, x, y] = x
     # s_flow[1, x, y] = y
 
-    t_idx = target_idx[indices]
+    t_idx = target_idx[indices[n_mask]]
 
     diff_x = t_idx[:, 0] - s_idx[:, 0]
     diff_y = t_idx[:, 1] - s_idx[:, 1]
@@ -293,7 +327,7 @@ def build_flow(source_idx, target_idx, indices, n_mask):
     # s_idx = s_idx[np.invert(mask)].astype(int)
     # diff_x = diff_x[np.invert(mask)].astype(int)
     # diff_y = diff_y[np.invert(mask)].astype(int)
-    mask = np.invert(np.isnan(diff_x)) & np.invert(np.isnan(diff_y)) & n_mask
+    mask = np.invert(np.isnan(diff_x)) & np.invert(np.isnan(diff_y))
     s_idx = s_idx[mask].astype(int)
     diff_x = diff_x[mask].astype(int)
     diff_y = diff_y[mask].astype(int)
@@ -301,8 +335,37 @@ def build_flow(source_idx, target_idx, indices, n_mask):
     x = s_idx[:, 0]
     y = s_idx[:, 1]
 
-    flow = np.zeros((2, 32, 2000))
+    flow = np.zeros((2, height, width))
     flow[0, x, y] = diff_x
     flow[1, x, y] = diff_y
 
-    return flow
+    flow_img = flow_to_color(flow.transpose(1, 2, 0))
+
+    return flow, flow_img
+
+
+def synth_flow(source, target):
+    source_xyz = np.load(os.path.join(source, 'un_proj_xyz.npy'))
+    target_xyz = np.load(os.path.join(target, 'un_proj_xyz.npy'))
+
+    source_idx = np.load(os.path.join(source, 'idx.npy'))
+    target_idx = np.load(os.path.join(target, 'idx.npy'))
+
+    source_mask = np.load(os.path.join(source, 'valid_mask.npy'))
+    target_mask = np.load(os.path.join(target, 'valid_mask.npy'))
+
+    corres = np.arange(source_xyz.shape[0])
+
+    source_x_y = map_points_xy(source_idx, source_mask, source_xyz.shape[0])
+    target_x_y = map_points_xy(target_idx, target_mask, target_xyz.shape[0])
+
+    # mask = source_mask * target_mask
+    mask = np.ones_like(corres).astype(bool)
+
+    # corres = corres[mask]
+
+    flow = build_flow(source_x_y, target_x_y, corres, mask)
+
+    flow_img = flow_to_color(flow.transpose(1, 2, 0))
+
+    return flow, flow_img

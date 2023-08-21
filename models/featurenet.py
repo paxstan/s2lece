@@ -6,68 +6,41 @@ import torch.nn.functional as F
 
 
 class BasicBlock(nn.Module):
-    def __init__(self, inplanes, planes, bn_d=0.1):
+    def __init__(self, inplanes, planes, model_type, bn_d=0.1):
         super(BasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes[0], kernel_size=1,
                                stride=1, padding=0, bias=False)
-        self.bn1 = nn.BatchNorm2d(planes[0], momentum=bn_d)
+        if model_type == 'fe':
+            self.norm1 = nn.InstanceNorm2d(planes[0], momentum=bn_d)
+
+        else:
+            self.norm1 = nn.BatchNorm2d(planes[0], momentum=bn_d)
+
+        # self.bn1 = nn.BatchNorm2d(planes[0], momentum=bn_d)
         self.relu1 = nn.LeakyReLU(0.1)
         self.conv2 = nn.Conv2d(planes[0], planes[1], kernel_size=3,
                                stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(planes[1], momentum=bn_d)
+        # self.bn2 = nn.BatchNorm2d(planes[1], momentum=bn_d)
+        if model_type == 'fe':
+            self.norm2 = nn.InstanceNorm2d(planes[1], momentum=bn_d)
+
+        else:
+            self.norm2 = nn.BatchNorm2d(planes[1], momentum=bn_d)
         self.relu2 = nn.LeakyReLU(0.1)
 
     def forward(self, x):
         residual = x
 
         out = self.conv1(x)
-        out = self.bn1(out)
+        out = self.norm1(out)
         out = self.relu1(out)
 
         out = self.conv2(out)
-        out = self.bn2(out)
+        out = self.norm2(out)
         out = self.relu2(out)
 
         out += residual
         return out
-
-
-class SACBlock(nn.Module):
-    def __init__(self, inplanes, expand1x1_planes, bn_d=0.1):
-        super(SACBlock, self).__init__()
-        self.inplanes = inplanes
-        self.bn_d = bn_d
-
-        self.attention_x = nn.Sequential(
-            nn.Conv2d(3, 9 * self.inplanes, kernel_size=7, padding=3),
-            nn.BatchNorm2d(9 * self.inplanes, momentum=0.1),
-        )
-
-        self.position_mlp_2 = nn.Sequential(
-            nn.Conv2d(9 * self.inplanes, self.inplanes, kernel_size=1),
-            nn.BatchNorm2d(self.inplanes, momentum=0.1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(self.inplanes, self.inplanes, kernel_size=3, padding=1),
-            nn.BatchNorm2d(self.inplanes, momentum=0.1),
-            nn.ReLU(inplace=True),
-        )
-
-    def forward(self, input):
-        xyz = input[0]
-        new_xyz = input[1]
-        feature = input[2]
-        N, C, H, W = feature.size()
-
-        new_feature = F.unfold(feature, kernel_size=3, padding=1).view(N, -1, H, W)
-        attention = F.sigmoid(self.attention_x(new_xyz))
-        new_feature = new_feature * attention
-        new_feature = self.position_mlp_2(new_feature)
-        fuse_feature = new_feature + feature
-
-        return xyz, new_xyz, fuse_feature
-
-
-# generate layers depending on darknet type
 
 
 class FeatureExtractorNet(nn.Module):
@@ -81,8 +54,9 @@ class FeatureExtractorNet(nn.Module):
         self.drop_prob = params["dropout"]
         self.bn_d = params["bn_d"]
         self.OS = params["OS"]
+        self.model_type = params["type"]
 
-        self.strides = [2, 2, 2, 1, 2]
+        self.strides = [2, 2, 2, 2, 2]
         # check current stride
         current_os = 1
         for s in self.strides:
@@ -113,23 +87,27 @@ class FeatureExtractorNet(nn.Module):
 
         self.blocks = model_blocks[params["model"]]
 
-        # input layer
-        self.conv1 = nn.Conv2d(self.in_channel, 2, kernel_size=3,
+        self.conv1 = nn.Conv2d(self.in_channel, 1, kernel_size=3,
                                stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(2, momentum=self.bn_d)
+        # self.bn1 = nn.BatchNorm2d(1, momentum=self.bn_d)
+        if self.model_type == 'fe':
+            self.norm1 = nn.InstanceNorm2d(1, momentum=self.bn_d)
+
+        else:
+            self.norm1 = nn.BatchNorm2d(1, momentum=self.bn_d)
         self.relu1 = nn.LeakyReLU(0.1)
 
         # encoder
-        self.enc1 = self._make_enc_layer(BasicBlock, [2, 4], self.blocks[0],
-                                         stride=self.strides[0], bn_d=self.bn_d)
-        self.enc2 = self._make_enc_layer(BasicBlock, [4, 8], self.blocks[1],
-                                         stride=self.strides[1], bn_d=self.bn_d)
-        self.enc3 = self._make_enc_layer(BasicBlock, [8, 16], self.blocks[2],
-                                         stride=self.strides[2], bn_d=self.bn_d)
-        self.enc4 = self._make_enc_layer(BasicBlock, [16, 16], self.blocks[3],
-                                         stride=self.strides[3], bn_d=self.bn_d)
+        self.enc1 = self._make_enc_layer(BasicBlock, [1, 2], self.blocks[0],
+                                         stride=self.strides[0], model_type=self.model_type, bn_d=self.bn_d)
+        self.enc2 = self._make_enc_layer(BasicBlock, [2, 4], self.blocks[1],
+                                         stride=self.strides[1], model_type=self.model_type, bn_d=self.bn_d)
+        self.enc3 = self._make_enc_layer(BasicBlock, [4, 8], self.blocks[2],
+                                         stride=self.strides[2], model_type=self.model_type, bn_d=self.bn_d)
+        self.enc4 = self._make_enc_layer(BasicBlock, [8, 16], self.blocks[3],
+                                         stride=self.strides[3], model_type=self.model_type, bn_d=self.bn_d)
         self.enc5 = self._make_enc_layer(BasicBlock, [16, 32], self.blocks[4],
-                                         stride=self.strides[4], bn_d=self.bn_d)
+                                         stride=self.strides[4], model_type=self.model_type, bn_d=self.bn_d)
 
         # for a bit of fun
         self.dropout = nn.Dropout2d(self.drop_prob)
@@ -139,19 +117,28 @@ class FeatureExtractorNet(nn.Module):
         self.input_depth = 0
 
     @staticmethod
-    def _make_enc_layer(block, planes, blocks, stride, bn_d=0.1):
+    def _make_enc_layer(block, planes, blocks, stride, model_type, bn_d=0.1):
         #  down sample
-        layers = [("conv", nn.Conv2d(planes[0], planes[1],
+        layers = []
+        layers.append(("conv", nn.Conv2d(planes[0], planes[1],
                                      kernel_size=3,
                                      stride=(1, stride), dilation=1,
-                                     padding=1, bias=False)),
-                  ("bn", nn.BatchNorm2d(planes[1], momentum=bn_d)),
-                  ("relu", nn.LeakyReLU(0.1))]
+                                     padding=1, bias=False)))
+        if model_type == 'fe':
+            layers.append(("instance", nn.InstanceNorm2d(planes[1], momentum=bn_d)))
+
+        else:
+            layers.append(("bn", nn.BatchNorm2d(planes[1], momentum=bn_d)))
+
+        layers.append(("relu", nn.LeakyReLU(0.1)))
+        # layers = [,
+        #           ("bn", nn.BatchNorm2d(planes[1], momentum=bn_d)),
+        #           ]
 
         #  blocks
         in_planes = planes[1]
         for i in range(0, blocks):
-            layers.append(("residual_{}".format(i), block(in_planes, planes, bn_d)))
+            layers.append(("residual_{}".format(i), block(in_planes, planes, model_type, bn_d)))
 
         return nn.Sequential(OrderedDict(layers))
 
@@ -177,149 +164,23 @@ class FeatureExtractorNet(nn.Module):
 
         # first layer
         x, skips, os = self.run_layer(x, self.conv1, skips, os)
-        x, skips, os = self.run_layer(x, self.bn1, skips, os)
+        x, skips, os = self.run_layer(x, self.norm1, skips, os)
         x, skips, os = self.run_layer(x, self.relu1, skips, os)
 
         # all encoder blocks with intermediate dropouts
         x, skips, os = self.run_layer(x, self.enc1, skips, os)
         x, skips, os = self.run_layer(x, self.dropout, skips, os)
+
         x, skips, os = self.run_layer(x, self.enc2, skips, os)
         x, skips, os = self.run_layer(x, self.dropout, skips, os)
+
         x, skips, os = self.run_layer(x, self.enc3, skips, os)
         x, skips, os = self.run_layer(x, self.dropout, skips, os)
+
         x, skips, os = self.run_layer(x, self.enc4, skips, os)
-        x, skips, os = self.run_layer(x, self.dropout, skips, os)
-        x, skips, os = self.run_layer(x, self.enc5, skips, os)
         x, skips, os = self.run_layer(x, self.dropout, skips, os)
 
         return x, skips
-
-
-class FeatureExtractorNet2(nn.Module):
-    """
-         Class for DarknetSeg. Subclasses PyTorch's own "nn" module
-      """
-
-    def __init__(self, params):
-        super(FeatureExtractorNet2, self).__init__()
-        self.in_channel = params["in_channel"]
-        self.drop_prob = params["dropout"]
-        self.bn_d = params["bn_d"]
-        self.OS = params["OS"]
-
-        self.strides = [2, 2, 2, 1, 1]
-        # check current stride
-        current_os = 1
-        for s in self.strides:
-            current_os *= s
-        print("Original OS: ", current_os)
-
-        # make the new stride
-        if self.OS > current_os:
-            print("Can't do OS, ", self.OS,
-                  " because it is bigger than original ", current_os)
-
-        else:
-            # redo strides according to needed stride
-            for i, stride in enumerate(reversed(self.strides), 0):
-                if int(current_os) != self.OS:
-                    if stride == 2:
-                        current_os /= 2
-                        self.strides[-1 - i] = 1
-                    if int(current_os) == self.OS:
-                        break
-            print("New OS: ", int(current_os))
-            print("Strides: ", self.strides)
-
-        model_blocks = {
-            21: [1, 1, 2, 2, 1],
-            53: [1, 2, 8, 8, 4],
-        }
-        self.blocks = model_blocks[params["model"]]
-
-        # input layer
-
-        self.conv1 = nn.Conv2d(self.in_channel, 32, kernel_size=3,
-                               stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(32, momentum=self.bn_d)
-        self.relu1 = nn.LeakyReLU(0.1)
-
-        # encoder
-
-        self.enc1 = self._make_enc_layer(SACBlock, [32, 64], self.blocks[0],
-                                         stride=self.strides[0], DS=True, bn_d=self.bn_d)
-        self.enc2 = self._make_enc_layer(SACBlock, [64, 128], self.blocks[1],
-                                         stride=self.strides[1], DS=True, bn_d=self.bn_d)
-        self.enc3 = self._make_enc_layer(SACBlock, [128, 256], self.blocks[2],
-                                         stride=self.strides[2], DS=True, bn_d=self.bn_d)
-        self.enc4 = self._make_enc_layer(SACBlock, [256, 256], self.blocks[3],
-                                         stride=self.strides[3], DS=True, bn_d=self.bn_d)
-        self.enc5 = self._make_enc_layer(SACBlock, [256, 256], self.blocks[4],
-                                         stride=self.strides[4], DS=True, bn_d=self.bn_d)
-
-        # for a bit of fun
-        self.dropout = nn.Dropout2d(self.drop_prob)
-
-        # last channels
-        self.last_channels = 256
-        self.input_depth = 0
-
-    @staticmethod
-    def _make_enc_layer(block, planes, blocks, stride, DS, bn_d=0.1):
-        layers = []
-
-        inplanes = planes[0]
-        for i in range(0, blocks):
-            layers.append(("residual_{}".format(i),
-                           block(inplanes, planes, bn_d)))
-
-        if DS == True:
-            layers.append(("conv", nn.Conv2d(planes[0], planes[1],
-                                             kernel_size=3,
-                                             stride=(1, stride), dilation=1,
-                                             padding=1, bias=False)))
-            layers.append(("bn", nn.BatchNorm2d(planes[1], momentum=bn_d)))
-            layers.append(("relu", nn.LeakyReLU(0.1)))
-
-        return nn.Sequential(OrderedDict(layers))
-
-    def run_layer(self, xyz, feature, layer, skips, os, flag=True):
-        new_xyz = xyz
-        if flag == True:
-            xyz, new_xyz, y = layer[:-3]([xyz, new_xyz, feature])
-            y = layer[-3:](y)
-            xyz = F.upsample_bilinear(xyz, size=[xyz.size()[2], xyz.size()[3] // 2])
-        else:
-            xyz, new_xyz, y = layer([xyz, new_xyz, feature])
-        if y.shape[2] < feature.shape[2] or y.shape[3] < feature.shape[3]:
-            skips[os] = feature.detach()
-            os *= 2
-        feature = self.dropout(y)
-        return xyz, feature, skips, os
-
-    def get_last_depth(self):
-        return self.last_channels
-
-    def get_input_depth(self):
-        return self.input_depth
-
-    def forward(self, feature):
-        # store for skip connections
-        skips = {}
-        os = 1
-
-        # first layer
-        xyz = feature[:, 1:4, :, :]
-        feature = self.relu1(self.bn1(self.conv1(feature)))
-
-        # all encoder blocks with intermediate dropouts
-        xyz, feature, skips, os = self.run_layer(xyz, feature, self.enc1, skips, os)
-        xyz, feature, skips, os = self.run_layer(xyz, feature, self.enc2, skips, os)
-        xyz, feature, skips, os = self.run_layer(xyz, feature, self.enc3, skips, os)
-        xyz, feature, skips, os = self.run_layer(xyz, feature, self.enc4, skips, os, flag=False)
-        xyz, feature, skips, os = self.run_layer(xyz, feature, self.enc5, skips, os, flag=False)
-
-        return feature, skips
 
 
 class Decoder(nn.Module):

@@ -1,9 +1,12 @@
 # Copyright 2019-present NAVER Corp.
 # CC BY-NC-SA 3.0
 # Available only for non-commercial use
-
+import logging
 import pdb
+import copy
 import numpy as np
+import matplotlib
+# matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import open3d as o3d
 from models.model_utils import coords_grid
@@ -136,47 +139,50 @@ def flow_to_color(flow_uv, clip_flow=None, convert_to_bgr=False):
 
 
 def compare_flow(target_flow, pred_flow, path, idx=1, loss=0):
-    pred_last_np = np.floor(pred_flow[0, :, :, :]
-                            .cpu().detach().numpy()).transpose(1, 2, 0).reshape(32 * 2000, 2)
-    # invalid_mask = ~valid_masks[-1][0, :, :].cpu().detach().numpy().flatten()
-    # pred_last_np[invalid_mask, :] = 0
+    predicted_flow = np.floor(pred_flow[0, :, :, :].cpu().detach().numpy()).transpose(1, 2, 0)
+    target_flow = target_flow[0, :, :, :].cpu().detach().squeeze().numpy().transpose(1, 2, 0)
 
-    pred_flow_img = flow_to_color(pred_last_np.reshape(32, 2000, 2))
-    true_flow_img = flow_to_color(target_flow[0, :, :, :].cpu().detach().squeeze().numpy().transpose(1, 2, 0))
+    pred_flow_img = flow_to_color(predicted_flow)
+    true_flow_img = flow_to_color(target_flow)
 
     fig, axes = plt.subplots(2, 1, sharex=True, sharey=True)
-    axes[0].imshow(true_flow_img.squeeze())
+    axes[0].imshow(true_flow_img)
     axes[0].set_title("original flow")
 
-    axes[1].imshow(pred_flow_img.squeeze())
+    axes[1].imshow(pred_flow_img)
     axes[1].set_title("predicted flow")
 
     # plt.text(2.5, -5, f'loss: {loss}', ha='center')
     plt.figtext(0.5, 0.05, f'loss: {loss}', ha='center')
 
-    plt.savefig(f"{path}/pred_optical_flow_{idx}.png", dpi=300)
+    plt.savefig(f"{path}/{idx}_pred_optical_flow.png", dpi=300)
 
     plt.close(fig)
+
+    np.save(f"{path}/{idx}_pred_optical_flow.npy", predicted_flow)
+    np.save(f"{path}/{idx}_target_optical_flow.npy", target_flow)
     # plt.show()
 
 
 def show_visual_progress(org_img, pred_img, path, title=None, loss=0):
-    b, c, h, w = org_img.shape
-    org_img = org_img.detach().cpu().numpy()[0, 0]
-    pred_img = pred_img.detach().cpu().numpy()[0, 0]
+    try:
+        org_img = org_img.detach().cpu().numpy()[0, 0]
+        pred_img = pred_img.detach().cpu().numpy()[0, 0]
 
-    fig, axes = plt.subplots(2, 1, sharex=True, sharey=True)
-    axes[0].imshow(org_img)
-    axes[0].set_title("original image")
-    axes[1].imshow(pred_img)
-    axes[0].set_title("predicted image")
+        fig, axes = plt.subplots(2, 1, sharex=True, sharey=True)
+        axes[0].imshow(org_img)
+        axes[0].set_title("original image")
+        axes[1].imshow(pred_img)
+        axes[0].set_title("predicted image")
 
-    plt.figtext(0.5, 0.05, f'loss: {loss}', ha='center')
+        plt.figtext(0.5, 0.05, f'loss: {loss}', ha='center')
 
-    if title:
-        title = title.replace(" ", "_")
-        plt.savefig(f"{path}/{title}", dpi=300)
-    plt.close(fig)
+        if title:
+            title = title.replace(" ", "_")
+            plt.savefig(f"{path}/{title}", dpi=300)
+        plt.close(fig)
+    except Exception as e:
+        logging.info(f"Issue in show  progress function : Exception: {e}")
 
 
 def visualize_point_cloud(pred_flow, mask_valid, metadata, transform=False):
@@ -290,3 +296,76 @@ def visualize_correspondence(source_point, target_point, valid_corres_id, transf
     # o3d.io.write_image("visualization.png", image)
 
     vis.destroy_window()
+
+
+def visualize_different_viewpoints(point_cloud):
+    # Load your point cloud data
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(point_cloud)
+
+    # Number of viewpoints
+    num_viewpoints = 5
+
+    # Create a visualization window
+    vis = o3d.visualization.Visualizer()
+
+    for i in range(num_viewpoints):
+        # Generate random rotation angles around X, Y, and Z axes
+        rand_rot_x = np.random.uniform(0, 2 * np.pi)
+        rand_rot_y = np.random.uniform(0, 2 * np.pi)
+        rand_rot_z = np.random.uniform(0, 2 * np.pi)
+
+        # Generate random translation along X, Y, and Z axes
+        rand_trans_x = np.random.uniform(-1, 1)
+        rand_trans_y = np.random.uniform(-1, 1)
+        rand_trans_z = np.random.uniform(-1, 1)
+
+        # Create rotation matrix
+        # rotation_matrix = np.array([
+        #     [np.cos(rand_rot_y) * np.cos(rand_rot_z), -np.cos(rand_rot_y) * np.sin(rand_rot_z), np.sin(rand_rot_y), 0],
+        #     [np.sin(rand_rot_x) * np.sin(rand_rot_y) * np.cos(rand_rot_z) + np.cos(rand_rot_x) * np.sin(rand_rot_z),
+        #      -np.sin(rand_rot_x) * np.sin(rand_rot_y) * np.sin(rand_rot_z) + np.cos(rand_rot_x) * np.cos(rand_rot_z),
+        #      -np.sin(rand_rot_x) * np.cos(rand_rot_y), 0],
+        #     [-np.cos(rand_rot_x) * np.sin(rand_rot_y) * np.cos(rand_rot_z) + np.sin(rand_rot_x) * np.sin(rand_rot_z),
+        #      np.cos(rand_rot_x) * np.sin(rand_rot_y) * np.sin(rand_rot_z) + np.sin(rand_rot_x) * np.cos(rand_rot_z),
+        #      np.cos(rand_rot_x) * np.cos(rand_rot_y), 0],
+        #     [0, 0, 0, 1]
+        # ])
+
+        rotation_matrix = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ])
+
+        # Create translation matrix
+        translation_matrix = np.array([
+            [1, 0, 0, rand_trans_x],
+            [0, 1, 0, 0],
+            [0, 0, 1, rand_trans_z],
+            [0, 0, 0, 1]
+        ])
+
+        # Combine rotation and translation to get the transformation matrix
+        transformation_matrix = translation_matrix @ rotation_matrix
+
+        # Deep copy the original point cloud before applying transformations
+        transformed_cloud = copy.deepcopy(pcd)
+
+        # Apply the transformation to the point cloud
+        transformed_cloud.transform(transformation_matrix)
+
+        o3d.io.write_point_cloud(f"../point_cloud_t_{i}.pcd", transformed_cloud)
+
+        # Add the transformed point cloud to the visualization
+        # vis.create_window()
+        # vis.add_geometry(transformed_cloud)
+        # vis.run()
+        # vis.update_geometry()
+        # vis.poll_events()
+        # vis.update_renderer()
+
+    # Close the visualization window
+    vis.destroy_window()
+

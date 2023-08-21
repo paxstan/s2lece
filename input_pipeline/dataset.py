@@ -81,6 +81,17 @@ class RealPairDataset(LidarBase):
         m[0:3, 0:3] = rot.as_matrix()
         return m
 
+    @staticmethod
+    def reverse_intensity(intensity_values):
+        # reversed_intensity = intensity_values.max() / intensity_values
+        inverse_depth = 1 / intensity_values
+
+        # Rescale the reversed values to the original intensity range
+        normalized_inverse_depth = (inverse_depth - inverse_depth.min()) / (
+                    inverse_depth.max() - inverse_depth.min())
+
+        return normalized_inverse_depth
+
     def __getitem__(self, idx):
         """ returns (img1, img2, `metadata`)
         """
@@ -109,6 +120,9 @@ class RealPairDataset(LidarBase):
 
         img2 = img2 * mask2
         img2[img2 == -0.0] = 0.0
+
+        # img1[mask1 == 1] = self.reverse_intensity(img1[mask1 == 1])
+        # img2[mask2 == 1] = self.reverse_intensity(img2[mask2 == 1])
 
         # h1, w1 = img1.shape
         # h2, w2 = img2.shape
@@ -196,14 +210,7 @@ class SingleDataset(LidarBase):
 
     def __getitem__(self, idx):
         img = self.load_np_file(os.path.join(self.root, str(idx), 'range.npy'))
-        # xyz = self.load_np_file(os.path.join(self.root, str(idx), 'xyz.npy'))
-        # un_proj_img = self.load_np_file(os.path.join(self.root, str(idx), 'un_proj_range.npy'))
-        # un_proj_xyz = self.load_np_file(os.path.join(self.root, str(idx), 'un_proj_xyz.npy'))
         mask = self.load_np_file(os.path.join(self.root, str(idx), 'valid_mask.npy'))
-
-        # img = torch.from_numpy(img).clone()
-        # xyz = torch.from_numpy(xyz).clone()
-        # mask = torch.from_numpy(mask).clone()
         img = img * mask
         img[img == -0.0] = 0.0
 
@@ -212,25 +219,6 @@ class SingleDataset(LidarBase):
 
         # img_pp = img[mask.astype(bool)]
         # img[mask.astype(bool)] = (img[mask.astype(bool)] - img_pp.mean()) / img_pp.std()
-
-        # img = histogram_equalization(img)
-
-        # result = dict(
-        #     img=to_tensor(img).to(torch.float32),
-        #     mask=to_tensor(mask),
-        #     path=os.path.join(self.root, str(idx))
-        # )
-
-        # proj = torch.cat([img.unsqueeze(0).clone(),
-        #                   xyz.clone().permute(2, 0, 1)])
-        #
-        # proj = (proj - self.sensor_img_means[:, None, None]) / self.sensor_img_stds[:, None, None]
-
-        # result = dict(
-        #     un_proj_img=un_proj_img,
-        #     un_proj_xyz=un_proj_xyz
-        # )
-
         result = dict(
             img=to_tensor(img).to(torch.float32),
             mask=to_tensor(mask),

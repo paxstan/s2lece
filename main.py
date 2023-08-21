@@ -3,7 +3,7 @@ import os
 import logging
 import random
 from absl import app, flags
-from input_pipeline.dataset_creator import DatasetCreator
+from input_pipeline.dataset_creator import DatasetCreator, SyntheticDatasetCreator, KittiDatasetCreator
 from input_pipeline.dataset import RealPairDataset, SingleDataset
 from input_pipeline.dataloader import threaded_loader
 import yaml
@@ -39,7 +39,13 @@ def main(argv):
     utils_misc.set_loggers(run_paths['path_logs_train'], logging.INFO)
 
     # extract and create dataset from ROS Bag
-    create_dataset = DatasetCreator(config)
+    # create_dataset = DatasetCreator(config)
+    # data_dir = create_dataset()
+
+    # create_synth_dataset = SyntheticDatasetCreator(config)
+    # data_dir = create_synth_dataset()
+
+    create_dataset = KittiDatasetCreator(config)
     data_dir = create_dataset()
 
     fe_params = config["autoencoder"]["params"]
@@ -48,65 +54,31 @@ def main(argv):
     if FLAGS.train:
         print("\n>> Creating networks..")
         if config["train_fe"]:
-            #     # dataset object for single lidar range images
-            #     combined_dataset = []
-            #     for dt in config["datasets"]:
-            #         dataset = config["dataset"][dt]
-            #         if os.path.exists(dataset['data_dir']):
-            #             single_dt = SingleDataset(root=dataset['data_dir'])
-            #             combined_dataset.append(single_dt)
-            #
-            #     full_dataset = ConcatDataset(combined_dataset)
+            # dataset object for single lidar range images
+            combined_dataset = []
+            for dt in config["datasets"]:
+                if dt != 'exp01':
+                    dataset = config["dataset"][dt]
+                    if os.path.exists(dataset['data_dir']):
+                        single_dt = SingleDataset(root=dataset['data_dir'])
+                        combined_dataset.append(single_dt)
 
-            single_dt = SingleDataset(root=data_dir)
+            full_dataset = ConcatDataset(combined_dataset)
+            val_single_dt = SingleDataset(root=config["dataset"]["exp01"]['data_dir'])
+
+            # single_dt = SingleDataset(root=data_dir)
             # val_single_dt = SingleDataset(root="../dataset/exp04")
 
-            train_size = int(0.8 * len(single_dt))  # 80% for training
-            val_size = len(single_dt) - train_size
-
-            train_dataset, val_dataset = random_split(single_dt, [train_size, val_size])
-
-            # meanr = 0.0
-            # stdr = 0.0
-            # meanx = 0.0
-            # stdx = 0.0
-            # meany = 0.0
-            # stdy = 0.0
-            # meanz = 0.0
-            # stdz = 0.0
-            # for idx, inputs in enumerate(train_dataset):
-            #     img = inputs.pop("un_proj_img")
-            #     unproj_xyz = inputs.pop("un_proj_xyz")
-            #     npoints = unproj_xyz.shape[0]
-            #     meanr += img[:npoints].mean()
-            #     stdr += img[:npoints].std()
-            #     meanx += unproj_xyz[:npoints, 0].mean()
-            #     stdx += unproj_xyz[:npoints, 0].std()
-            #     meany += unproj_xyz[:npoints, 1].mean()
-            #     stdy += unproj_xyz[:npoints, 1].std()
-            #     meanz += unproj_xyz[:npoints, 2].mean()
-            #     stdz += unproj_xyz[:npoints, 2].std()
+            # train_size = int(0.8 * len(full_dataset))  # 80% for training
+            # val_size = len(full_dataset) - train_size
             #
-            # meanr /= len(train_dataset)
-            # stdr /= len(train_dataset)
-            # meanx /= len(train_dataset)
-            # stdx /= len(train_dataset)
-            # meany /= len(train_dataset)
-            # stdy /= len(train_dataset)
-            # meanz /= len(train_dataset)
-            # stdz /= len(train_dataset)
+            # train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
 
-            # for idx, (img, means, stds) in enumerate(val_dataset):
-            #     print(means, std)
-            #     mean += means
-            #     std += stds
-
-            # fe_params["in_channel"] = 4
             net = AutoEncoder(fe_params).to(device)
-            test_network("ae", train_dataset, net)
+            # test_network("ae", full_dataset, net)
 
-            train_loader = threaded_loader(train_dataset, batch_size=2, iscuda=iscuda, threads=1)
-            val_loader = threaded_loader(val_dataset, batch_size=2, iscuda=iscuda, threads=1, shuffle=False)
+            train_loader = threaded_loader(full_dataset, batch_size=4, iscuda=iscuda, threads=1)
+            val_loader = threaded_loader(val_single_dt, batch_size=4, iscuda=iscuda, threads=1, shuffle=False)
 
             if FLAGS.train:
                 train = TrainAutoEncoder(net=net, train_loader=train_loader, val_loader=val_loader,
@@ -135,16 +107,16 @@ def main(argv):
             # train_loader, val_loader = train_test_split(dataloader, train_size=0.7, random_state=42)
             # val_loader, test_loader = train_test_split(val_loader, train_size=0.5, random_state=42)
 
-            feature_net = AutoEncoder(fe_params).to(device)
-            encoder_state_dict = load_encoder_state_dict(feature_net, config["autoencoder"]["save_path"])
             net = S2leceNet(config, fe_params, sl_params)
-            net.load_encoder(encoder_state_dict)
+            # feature_net = AutoEncoder(fe_params).to(device)
+            # encoder_state_dict = load_encoder_state_dict(feature_net, config["s2lece"]["ae_path"])
+            # net.load_encoder(encoder_state_dict)
             net.to(device)
-            test_network("s2lece", val_dataset, net)
+            # test_network("s2lece", pair_dt, net)
 
             train_loader = threaded_loader(train_dataset, batch_size=config["s2lece"]["batch_size"],
                                            iscuda=iscuda, threads=1)
-            val_loader = threaded_loader(train_dataset, batch_size=config["s2lece"]["batch_size"],
+            val_loader = threaded_loader(val_dataset, batch_size=config["s2lece"]["batch_size"],
                                          iscuda=iscuda, threads=1, shuffle=False)
 
             if FLAGS.train:

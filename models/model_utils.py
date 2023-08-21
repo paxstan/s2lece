@@ -317,21 +317,56 @@ def ae_loss_criterion(pred_img, img, mask):
     return loss
 
 
-def patch_mse_loss(input_image, target_image, patch_size=16, reduction='mean'):
+def patch_mse_loss(input_images, target_images, mask, patch_size=16, step=8, mask_loss=False):
     # Ensure the input images have the same shape
-    assert input_image.shape == target_image.shape, "Input and target images must have the same shape"
+    assert input_images.shape == target_images.shape, "Input and target images must have the same shape"
 
-    criterion = nn.MSELoss(reduction=reduction)
-    mse_value = 0.0
-    for i in range(input_image.size(2) - patch_size + 1):
-        for j in range(input_image.size(3) - patch_size + 1):
-            input_patch = input_image[:, :, i:i + patch_size, j:j + patch_size]
-            target_patch = target_image[:, :, i:i + patch_size, j:j + patch_size]
-            mse_value += criterion(input_patch, target_patch)
+    mse_masked = torch.empty(0)
+    # Extract patch tensors using unfold operation
+    input_patches = input_images.unfold(2, patch_size, step).unfold(3, patch_size, step)
+    target_patches = target_images.unfold(2, patch_size, step).unfold(3, patch_size, step)
 
-    mse_value /= (input_image.size(2) - patch_size + 1) * (input_image.size(3) - patch_size + 1)
+    # Calculate MSE loss for each patch and flatten the patches along spatial dimensions
+    mse_loss = F.mse_loss(input_patches, target_patches, reduction='none')
 
-    return mse_value
+    b, c, h1, w1, p1, p2 = mse_loss.shape
+    # mse_loss = mse_loss.view(mse_loss.shape[0], mse_loss.shape[1], -1).mean(dim=-1)
+    mse_loss = mse_loss.reshape(b, c, h1 * w1 * p1 * p2)
+    if mask_loss:
+        mask_patches = mask.unfold(2, patch_size, step).unfold(3, patch_size, step)
+        mask_patches = mask_patches.reshape(b, c, h1 * w1 * p1 * p2)
+        mse_loss *= mask_patches
+        if mask_patches.any():
+            mse_masked = (torch.sum(mse_loss) / torch.sum(mask_patches))
+    else:
+        mse_masked = mse_loss.mean()
+    mse_masked = mse_masked.to(input_images.device)
+    return mse_masked
+
+    # mse_values = torch.zeros(batch_size, device=input_images.device)
+    # for b in range(batch_size):
+    #     input_image = input_images[b]
+    #     target_image = target_images[b]
+    #     for i in range(input_image.size(1) - patch_size + 1):
+    #         for j in range(input_image.size(2) - patch_size + 1):
+    #             input_patch = input_image[:, i:i + patch_size, j:j + patch_size]
+    #             target_patch = target_image[:, i:i + patch_size, j:j + patch_size]
+    #             mse_values[b] += F.mse_loss(input_patch, target_patch, reduction=reduction)
+    #
+    #     mse_values[b] /= (input_image.size(1) - patch_size + 1) * (input_image.size(2) - patch_size + 1)
+
+    # mse_value = 0.0
+    # criterion = nn.MSELoss(reduction=reduction)
+    # for i in range(input_image.size(2) - patch_size + 1):
+    #     for j in range(input_image.size(3) - patch_size + 1):
+    #         input_patch = input_image[:, :, i:i + patch_size, j:j + patch_size]
+    #         target_patch = target_image[:, :, i:i + patch_size, j:j + patch_size]
+    #         mse_value += criterion(input_patch, target_patch)
+
+    # mse_value /= (input_image.size(2) - patch_size + 1) * (input_image.size(3) - patch_size + 1)
+
+    # Average the losses across the batch
+    # batch_loss = mse_values.mean()
 
 
 class CustomMSELoss(nn.Module):
@@ -349,6 +384,22 @@ class CustomMSELoss(nn.Module):
         # loss = torch.mean(squared_diff)
 
         return loss
+
+
+def patch_flow_loss(flow_pred, flow_gt, max_flow=400, train=True):
+    if not train:
+        torch.set_grad_enabled(False)
+
+    flow_loss = torch.tensor(0.0, dtype=torch.float32).to(flow_gt.device)
+    mag = torch.sum(flow_gt ** 2, dim=1).sqrt()
+
+    # valid = mask & (mag < max_flow)[:, None]
+    valid = (mag < max_flow)
+    valid = valid.unsqueeze(1)
+
+    mse_loss = patch_mse_loss(flow_gt, flow_pred, valid)
+    return mse_loss
+
 
 
 def s2lece_loss_criterion(flow_pred, flow_gt, max_flow=400, train=True):
