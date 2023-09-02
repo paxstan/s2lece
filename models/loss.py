@@ -1,38 +1,11 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 from utils import pytorch_ssim
 from models.model_utils import warp
 import math
 
 if hasattr(F, 'interpolate'):
     interpolate = torch.nn.functional.interpolate
-
-
-def compute_divergence(flow):
-    """Compute the divergence of the flow field."""
-    # Compute gradients along the spatial dimensions (H and W) of the flow field
-    # dU_dx = flow[:, 0].unsqueeze(1).contiguous()
-    # dV_dy = flow[:, 1].unsqueeze(1).contiguous()
-
-    dU_dx = flow[:, 0].contiguous()
-    dV_dy = flow[:, 1].contiguous()
-
-    # Compute the divergence as the sum of the gradients
-    divergence = dU_dx + dV_dy
-    return divergence
-
-
-def compute_curl(flow):
-    """Compute the curl of the flow field."""
-    # Compute gradients along the spatial dimensions (H and W) of the flow field
-    dU_dy = flow[:, 0].unsqueeze(1).contiguous()
-    dV_dx = flow[:, 1].unsqueeze(1).contiguous()
-
-    # Compute the curl as the difference between the gradients
-    curl = dV_dx - dU_dy
-    return curl
 
 
 def rmse_loss_fn(pred_flow, target_flow, sparse=True):
@@ -46,7 +19,10 @@ def rmse_loss_fn(pred_flow, target_flow, sparse=True):
         # print(mask.shape, rse_loss.shape)
         rse_loss = rse_loss.permute(0, 2, 3, 1)
 
-        rse_loss = rse_loss[~mask]
+        # if mask.all():
+        #     rse_loss = torch.tensor(0.0).to(target_flow.device)
+        if not mask.all():
+            rse_loss = rse_loss[~mask]
         # print(mask.shape, rse_loss.shape)
 
     # masked_rse_loss = rse_loss * mask
@@ -55,7 +31,7 @@ def rmse_loss_fn(pred_flow, target_flow, sparse=True):
     rmse_loss = rse_loss.mean()
 
     if torch.isnan(rmse_loss):
-        rmse_loss = torch.tensor(0.0)
+        rmse_loss = torch.tensor(0.0).to(target_flow.device)
     # rmse_loss = torch.sqrt(mse_loss)
 
     return rmse_loss
@@ -64,13 +40,10 @@ def rmse_loss_fn(pred_flow, target_flow, sparse=True):
 def average_angular_error_fn(pred_flow, target_flow, sparse=True):
     """Calculate the Average Angular Error (AAE) between predicted and ground truth flows."""
 
-    # y_pred = pred_flow[:, :, mask.squeeze()]
-    # y_true = gt_flow[:, :, mask.squeeze()]
     dotP = torch.sum(pred_flow * target_flow, dim=1)
     Norm_pred = torch.sqrt(torch.sum(pred_flow * pred_flow, dim=1))
     Norm_true = torch.sqrt(torch.sum(target_flow * target_flow, dim=1))
     ae = 180 / math.pi * torch.acos(dotP / (Norm_pred * Norm_true + 1e-6))
-    # ae = 180 / math.pi * torch.acos(torch.clamp((dotP / (Norm_pred * Norm_true)), -1.0 + 1e-8, 1.0 - 1e-8))
 
     # ae_mean = torch.sum(ae) / torch.sum(mask)
     # return ae.mean(1).mean(1)
@@ -80,60 +53,28 @@ def average_angular_error_fn(pred_flow, target_flow, sparse=True):
         # invalid flow is defined with both flow coordinates to be exactly 0
         mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
 
-        ae = ae[~mask]
+        # if mask.all():
+        #     ae = torch.tensor(0.0).to(target_flow.device)
+        if not mask.all():
+            ae = ae[~mask]
 
     mean = ae.mean()
     if torch.isnan(mean):
-        mean = torch.tensor(0.0)
+        mean = torch.tensor(0.0).to(target_flow.device)
     return mean
 
 
-def div_curl_loss_fn(pred_flow, target_flow, div_weight=0.8, curl_weight=0.2, sparse=True):
-    # pred_flow = pred_flow * mask
-    # gt_flow = gt_flow * mask
-    div = compute_divergence(target_flow)
-    curl = compute_curl(target_flow)
-
-    div_hat = compute_divergence(pred_flow)
-    curl_hat = compute_curl(pred_flow)
-
-    div_norm = torch.norm(div - div_hat)
-    curl_norm = torch.norm(curl - curl_hat)
-
-    div_curl = (div_weight * div_norm) + (curl_weight * curl_norm)
-
-    if sparse:
-        # invalid flow is defined with both flow coordinates to be exactly 0
-        # mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
-        mask = (target_flow == [0, 0])
-
-        div_curl = div_curl[~mask]
-
-    # div_curl_loss = torch.sum(div_curl) / torch.sum(mask)
-
-    # divergence_loss = torch.mean((div_hat * mask - div * mask).abs())
-    # curl_loss = torch.mean((curl_hat * mask - curl * mask).abs())
-    #
-    # # Combine the divergence and curl losses
-    # total_loss = divergence_loss + curl_loss
-    div_curl_loss = div_curl.mean()
-    if torch.isnan(div_curl_loss):
-        div_curl_loss = torch.tensor(0.0)
-    return div_curl_loss
-
-
 def epe_loss_fn(input_flow, target_flow, sparse=True, mean=True):
-    # if mask is not None:
-    #     target_flow = target_flow * mask
-    #     input_flow = input_flow * mask
     EPE_map = torch.norm(target_flow - input_flow, 2, 1)
 
     batch_size = EPE_map.size(0)
     if sparse:
         # invalid flow is defined with both flow coordinates to be exactly 0
         mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
-
-        EPE_map = EPE_map[~mask]
+        # if mask.all():
+        #     EPE_map = torch.tensor(0.0).to(target_flow.device)
+        if not mask.all():
+            EPE_map = EPE_map[~mask]
     if mean:
         return EPE_map.mean()
     else:
@@ -183,38 +124,68 @@ def mae_loss_fn(pred_flow, target_flow, sparse=True):
         mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
         abs_loss = abs_loss.permute(0, 2, 3, 1)
 
-        abs_loss = abs_loss[~mask]
-        # print(mask.shape, rse_loss.shape)
+        # if mask.all():
+        #     abs_loss = abs_loss
+            # abs_loss = torch.tensor(0.0).to(target_flow.device)
+        if not mask.all():
+            abs_loss = abs_loss[~mask]
 
     return abs_loss.mean()
 
 
-def flow_loss(pred_flow, target_flow):
+def flow_loss_metric(pred_flow, target_flow):
     epe_loss = epe_loss_fn(pred_flow, target_flow)
     rmse_loss = rmse_loss_fn(pred_flow, target_flow)
     aae_loss = average_angular_error_fn(pred_flow, target_flow)
     mae_loss = mae_loss_fn(pred_flow, target_flow)
-    # div_curl_loss = div_curl_loss_fn(pred_flow, target_flow, div_weight=1, curl_weight=1)
 
     return [epe_loss, rmse_loss, aae_loss, mae_loss]
 
 
-def reconstruct_loss(f1, f2, averge=True):
-    # beta_1, beta_2, beta_3 = 0.5, 0.6, 0.5
+def reconstruct_loss_metric(f1, f2):
     diff_loss = charbonnier_penalty(f2 - f1, delta=0.4, averge=True)
     ssim_loss = 1.0 - pytorch_ssim.ssim(f1, f2, window_size=16, size_average=True)  # [0, 1]
     mse_loss = patch_mse_loss(f1, f2)
     psnr_loss = -10.0 * ((1.0 / (mse_loss + 1)).log10())
 
-    # num = 1 if averge else f1.shape[-2] * f1.shape[-1]
-    # diff_loss = num * beta_1 * diff_loss
-    # ssim_loss = num * beta_2 * ssim_loss
-    # psnr_loss = num * beta_3 * psnr_loss
-
     return [diff_loss, ssim_loss, psnr_loss, mse_loss]
 
 
-def flow_loss_fn(img1, img2, target_flow, pred_flow, mask, max_flow=400, patch_size=16, step=16):
+def sequence_loss(flow_preds, target_flow, gamma=0.8):
+    """ Loss function defined over sequence of flow predictions """
+
+    n_predictions = len(flow_preds)
+    flow_loss = 0.0
+    mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
+
+    for i in range(n_predictions):
+        i_weight = gamma ** (n_predictions - i - 1)
+        i_loss = (flow_preds[i] - target_flow).abs()
+        i_loss = i_loss.permute(0, 2, 3, 1)
+        # if mask.all():
+        #     # i_loss = torch.tensor(0.0, requires_grad=True).to(target_flow.device)
+        #     i_loss = i_loss
+        if not mask.all():
+            i_loss = i_loss[~mask]
+        flow_loss += (i_weight * i_loss.mean())
+    return flow_loss
+
+
+def autoencoder_loss_fn(pred_img, target_image, mask):
+    if mask is not None:
+        pred_img = pred_img * mask
+        mask_loss = (1.0 - mask).mean()
+    else:
+        mask_loss = 0.0
+    diff_loss, ssim_loss, psnr_loss, mse_loss = reconstruct_loss_metric(target_image, pred_img)
+    metrics = {
+        "diff loss": diff_loss.detach(), "ssim loss": ssim_loss.detach(),
+        "psnr loss": psnr_loss.detach(), "mask loss": mask_loss.detach()
+    }
+    return mse_loss, metrics
+
+
+def flow_loss_fn(img1, img2, target_flow, pred_flow_list, mask, max_flow=400):
     assert img1.shape == img2.shape, "Input and target images must have the same shape"
 
     if mask is not None:
@@ -224,22 +195,21 @@ def flow_loss_fn(img1, img2, target_flow, pred_flow, mask, max_flow=400, patch_s
         mask_loss = 0.0
 
     magnitude = torch.sum(target_flow ** 2, dim=1).sqrt().unsqueeze(dim=1)
-    # print((magnitude < max_flow).shape, (mask == 1).shape)
     valid_flow_mask = (magnitude < max_flow) & (mask == 1)
-    # valid_flow_mask = valid_flow_mask.unsqueeze(1)
 
     target_flow = target_flow * valid_flow_mask
-    pred_flow = pred_flow * valid_flow_mask
+    pred_flow = pred_flow_list[-1]
+    flow_loss = sequence_loss(pred_flow_list, target_flow)
 
     warped_img1 = warp(img1, pred_flow)
 
-    epe_loss, rmse_loss, aae_loss, mae_loss = flow_loss(pred_flow, target_flow)
-    diff_loss, ssim_loss, psnr_loss, mse_loss = reconstruct_loss(img2, warped_img1)
+    epe_loss, rmse_loss, aae_loss, mae_loss = flow_loss_metric(pred_flow, target_flow)
+    diff_loss, ssim_loss, psnr_loss, mse_loss = reconstruct_loss_metric(img2, warped_img1)
 
     metrics = {
         "flow": {
             "rmse loss": rmse_loss.detach(), "epe loss": epe_loss.detach(),
-            "aae loss": aae_loss.detach(),
+            "aae loss": aae_loss.detach(), "mae loss": mae_loss.detach()
         },
         "reconstruct": {
             "diff loss": diff_loss.detach(), "ssim loss": ssim_loss.detach(),
@@ -248,4 +218,4 @@ def flow_loss_fn(img1, img2, target_flow, pred_flow, mask, max_flow=400, patch_s
         }
     }
 
-    return mae_loss, metrics
+    return flow_loss, metrics

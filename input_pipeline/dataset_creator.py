@@ -237,19 +237,28 @@ class SyntheticDatasetCreator:
 
 
 class KittiDatasetCreator:
-    def __init__(self, config):
+    def __init__(self, config, dataset_name, synth=False):
         self.config = config
-        self.dataset = config["dataset"][config["datasets"][config["dataset_choice"]]]
+        self.synth = synth
+        self.dataset = config["dataset"][dataset_name]
         self.root = self.dataset['data_dir']
         self.dataset_path = os.path.join(self.dataset['path'], self.dataset['dataset_path'])
         self.generate_ground_truth = self.dataset["generate_ground_truth"]
         self.ground_truth = os.path.join(self.dataset['path'], self.dataset['ground_truth'])
         self.lidar_param = config["lidar_param"]["kitti"]
+        self.translation_range_x = 5
+        self.translation_range_y = 5
+        self.translation_range_z = 5
+        self.rotation_range_x = 10
+        self.rotation_range_y = 10
+        self.rotation_range_z = 30
+        self.list_of_pairs = []
 
-        if self.generate_ground_truth:
-            with open(self.ground_truth) as file:
-                self.ground_truth_imu = np.array([tuple(map(float, line.rstrip().split(" "))) for line in file])
-            # self.ground_truth_imu = self.ground_truth_imu[1:]
+        with open(self.ground_truth) as file:
+            self.ground_truth_imu = np.array([tuple(map(float, line.rstrip().split(" "))) for line in file])
+        # if self.generate_ground_truth:
+        #
+        #     # self.ground_truth_imu = self.ground_truth_imu[1:]
 
         self.lidar_data_converter = LidarDataConverter(
             lidar_param=self.lidar_param, save_dir=self.dataset["data_dir"],
@@ -264,12 +273,21 @@ class KittiDatasetCreator:
             logging.info("extracting raw dataset from ros bag.....")
             os.makedirs(self.root)
             os.makedirs(self.corres_path)
-            self.point_cloud_extractor()
-            self.generate_pairs()
+            if not self.synth:
+                self.point_cloud_extractor()
+                self.generate_pairs()
+            else:
+                self.synth_point_cloud_extractor()
+            if self.generate_ground_truth:
+                dt = np.dtype([('source', np.int32), ('target', np.int32), ('corres', 'object')])
+                arr = np.empty(len(self.list_of_pairs), dtype=dt)
+                for idx, val in enumerate(self.list_of_pairs):
+                    arr[idx] = (val['source'], val['target'], val['corres_dir'])
+                np.save(os.path.join(self.root, "corres.npy"), arr)
             logging.info("Finished extraction of raw dataset !")
         else:
             logging.info("raw dataset already extracted !")
-        return os.path.abspath(self.root)
+        return self.dataset
 
     def point_cloud_extractor(self):
         list_gt = []
@@ -285,9 +303,46 @@ class KittiDatasetCreator:
         np.save(self.gt_gen_path, np.array(list_gt))
         logging.info("Point cloud extraction completed....")
 
+    def synth_point_cloud_extractor(self):
+        source_idx = 0
+        target_idx = 1
+        list_gt = []
+        for i, pose in enumerate(self.ground_truth_imu):
+            pcd_path = os.path.join(self.dataset_path, f"{i:06d}.pcd")
+            pcd = o3d.io.read_point_cloud(pcd_path)
+            points = np.asarray(pcd.points)
+            timestamp = np.full((points.shape[0], 1), pose[0], dtype=float)
+            data = np.hstack([points, timestamp])
+            self.lidar_data_converter(data, source_idx, self.ground_truth_imu[i], None)
+            list_gt.append(self.ground_truth_imu[i])
+            for j in range(3):
+                target_idx = source_idx + j + 1
+                source_copy = copy.deepcopy(pcd)
+                if not self.generate_ground_truth:
+                    translation_x = np.random.uniform(-self.translation_range_x, self.translation_range_x)
+                    translation_y = np.random.uniform(-self.translation_range_y, self.translation_range_y)
+                    translation_z = np.random.uniform(-self.translation_range_z, self.translation_range_z)
+                    source_copy.translate([translation_x, translation_y, translation_z])
+                    rotate_x = np.random.uniform(-self.rotation_range_x, self.rotation_range_x)
+                    rotate_y = np.random.uniform(-self.rotation_range_y, self.rotation_range_y)
+                    rotation = source_copy.get_rotation_matrix_from_xyz((rotate_x, rotate_y, 0))
+                    source_copy.rotate(rotation, center=(0, 0, 0))
+                rotate_z = np.random.uniform(-self.rotation_range_z // (j+1), self.rotation_range_z // (j+1))
+                rotation = source_copy.get_rotation_matrix_from_xyz((0, 0, rotate_z))
+                source_copy.rotate(rotation, center=(0, 0, 0))
+                new_data = np.hstack([np.asarray(source_copy.points), timestamp])
+                self.lidar_data_converter(new_data, target_idx, self.ground_truth_imu[i], None)
+                if self.generate_ground_truth:
+                    self.generate_synth_corres(source_idx, target_idx, str(rotate_z))
+                list_gt.append(self.ground_truth_imu[i])
+
+            source_idx = target_idx + 1
+            # target_idx = source_idx + 1
+            print(f"processed... {i}")
+        np.save(self.gt_gen_path, np.array(list_gt))
+        logging.info("Point cloud extraction completed....")
+
     def generate_pairs(self):
-        list_of_pairs = []
-        dt = np.dtype([('source', np.int32), ('target', np.int32), ('corres', 'object')])
         # poses = np.load(self.gt_gen_path)[:, 1:4]
         timestamps = np.load(self.gt_gen_path)[:, 0]
         pair_threshold = self.correspondence_param["pair_distance"]
@@ -314,7 +369,13 @@ class KittiDatasetCreator:
                                                                height=self.lidar_param["height"],
                                                                width=self.lidar_param["width"])
 
-                    dir_path = os.path.join(self.corres_path, pair["corres_dir"])
+                    if csv_dict[0]["non_zero_flow_percent"] >= 10:
+                        self.list_of_pairs.append(pair)
+                        corres_path = self.corres_path
+                    else:
+                        logging.info(f"Rejected pair {pair['corres_dir']}: {csv_dict[0]['non_zero_flow_percent']}")
+                        corres_path = "../dataset/rejected_kitti04"
+                    dir_path = os.path.join(corres_path, pair["corres_dir"])
                     if not os.path.exists(dir_path):
                         os.makedirs(dir_path)
                     np.save(os.path.join(dir_path, "flow.npy"), flow)
@@ -326,15 +387,38 @@ class KittiDatasetCreator:
                     df = pd.DataFrame(csv_dict)
 
                     df.to_csv(file_name, index=False)
-
-                    list_of_pairs.append(pair)
-
-                logging.info(f"corres count at {i}: {len(list_of_pairs)}")
+                logging.info(f"corres count at {i}: {len(self.list_of_pairs)}")
             except Exception as e:
                 logging.info(f"generate_pair: {e}")
 
-        arr = np.empty(len(list_of_pairs), dtype=dt)
-        for idx, val in enumerate(list_of_pairs):
-            arr[idx] = (val['source'], val['target'], val['corres_dir'])
-        np.save(os.path.join(self.root, "corres.npy"), arr)
         logging.info("Finished generating pairs....")
+
+    def generate_synth_corres(self, source_idx, target_idx, transform_param):
+        source_path = os.path.join(self.root, str(source_idx))
+        target_path = os.path.join(self.root, str(target_idx))
+        pair = dict()
+        pair["source"] = source_idx
+        pair["target"] = target_idx
+        pair["corres_dir"] = f"corres_{source_idx}_{target_idx}"
+        flow, flow_img, csv_dict = synth_flow(source_path, target_path, height=self.lidar_param["height"],
+                                              width=self.lidar_param["width"])
+        csv_dict[0]["transform_param"] = transform_param
+        dir_path = os.path.join(self.corres_path, pair["corres_dir"])
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+        np.save(os.path.join(dir_path, "flow.npy"), flow)
+        image = Image.fromarray(flow_img)
+        image.save(os.path.join(dir_path, 'flow_img.png'))
+
+        file_name = os.path.join(dir_path, f"csv_{pair['corres_dir']}.csv")
+
+        df = pd.DataFrame(csv_dict)
+
+        df.to_csv(file_name, index=False)
+
+        # f = open(os.path.join(dir_path, "tranform_param.txt"), "a")
+        # f.write(f"z rotation: {transform_param}")
+        # f.close()
+
+        self.list_of_pairs.append(pair)
+        print(f"corres count at {source_idx}: {len(self.list_of_pairs)}")

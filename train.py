@@ -3,19 +3,19 @@ from tqdm import tqdm
 import wandb
 import torch.nn.functional as F
 import torch.optim.lr_scheduler as toptim
-from models.model_utils import s2lece_loss_criterion, ae_loss_criterion, CustomMSELoss, patch_mse_loss
+from models.model_utils import s2lece_loss_criterion, ae_loss_criterion, patch_mse_loss
 from utils import pytorch_ssim
 from visualization.visualization import compare_flow, show_visual_progress
 import os
 import logging
-from models.loss import flow_loss_fn
-from torch.cuda.amp import GradScaler
+from models.loss import flow_loss_fn, autoencoder_loss_fn
+from torch.cuda.amp import GradScaler, autocast
 
 torch.autograd.set_detect_anomaly(True)
 
 
 class Train:
-    def __init__(self, net, config, run_paths, model_type, is_cuda=False):
+    def __init__(self, net, config, run_paths, dataset_name, model_type, is_cuda=False):
         self.is_cuda = is_cuda
         self.model_type = model_type
         self.net = net
@@ -35,7 +35,7 @@ class Train:
         self.wandb_config = {
             "learning_rate": self.learning_rate,
             "architecture": model_type,
-            "dataset": config["dataset"][config["datasets"][config["dataset_choice"]]],
+            "dataset": dataset_name,
             "epochs": self.epochs,
             "run_id": run_paths['path_model_id']
         }
@@ -45,64 +45,65 @@ class Train:
         self.train()
 
     def train(self):
-        try:
-            if self.enable_wandb:
-                wandb.init(
-                    project="s2lece",
-                    config=self.wandb_config
-                )
+        # try:
+        if self.enable_wandb:
+            wandb.init(
+                project="s2lece",
+                config=self.wandb_config
+            )
 
-            for i in range(self.start_epoch, self.epochs):
-                train_result = self.train_step(i)
-                val_result = self.validate_step(i)
-                result = {**train_result, **val_result}
-                log = (f"epoch: {i + 1}, train loss: {result['training loss']}, "
-                       f"val loss: {result['validation loss']}")
+        for i in range(self.start_epoch, self.epochs):
+            train_result = self.train_step(i)
+            val_result = self.validate_step(i)
+            result = {**train_result, **val_result}
+            log = (f"epoch: {i + 1}, train loss: {result['training loss']}, "
+                   f"val loss: {result['validation loss']}")
 
-                logging.info(result)
-                if self.enable_wandb:
-                    wandb.log(result)
-
-                if result['validation loss'] < self.best_loss or i == 0:
-                    self.best_loss = result['validation loss']
-                    logging.info(f"best loss: {self.best_loss}")
-                    torch.save({
-                        'epoch': i,
-                        'model_state_dict': self.net.state_dict(),
-                        'optimizer_state_dict': self.optimizer.state_dict(),
-                        'scheduler_state_dict': self.scheduler.state_dict(),
-                        'loss': result['training loss'],
-                        'val loss': result['validation loss']
-                    }, os.path.join(self.ckpt_path, "best_model.pt"))
-                    self.stop_counter = 0
-                else:
-                    self.stop_counter += 1
-                # if self.early_stop_limit <= self.stop_counter:
-                #     print("Stopping early!!!!!")
-                #     break
-
-                if i % self.ckpt_interval == 0:
-                    logging.info(f"Saving checkpoint at epoch {i}.")
-                    torch.save({
-                        'epoch': i,
-                        'model_state_dict': self.net.state_dict(),
-                        'optimizer_state_dict': self.optimizer.state_dict(),
-                        'scheduler_state_dict': self.scheduler.state_dict(),
-                        'loss': result['training loss'],
-                        'val loss': result['validation loss']
-                    }, os.path.join(self.ckpt_path, f"ckpts_{i}.pt"))
-
-            if self.model_type == "autoencoder":
-                torch.save({'net': 'FeatureExtractorNet', 'state_dict': self.net.state_dict()}, self.save_path)
-            else:
-                torch.save({'net': 'SleceNet', 'state_dict': self.net.state_dict()}, self.save_path)
-
-            log = f"Saved model to {self.save_path}"
             logging.info(log)
             if self.enable_wandb:
-                wandb.finish()
-        except Exception as e:
-            logging.error(f"Exception at main train: {e}")
+                wandb.log(result)
+
+            if result['validation loss'] < self.best_loss or i == 0:
+                self.best_loss = result['validation loss']
+                logging.info(f"best loss: {self.best_loss}")
+                torch.save({
+                    'epoch': i,
+                    'state_dict': self.net.state_dict(),
+                    'optimizer_state_dict': self.optimizer.state_dict(),
+                    'scheduler_state_dict': self.scheduler.state_dict(),
+                    'loss': result['training loss'],
+                    'val loss': result['validation loss']
+                }, os.path.join(self.ckpt_path, "best_model.pt"))
+                self.stop_counter = 0
+            else:
+                self.stop_counter += 1
+            # if self.early_stop_limit <= self.stop_counter:
+            #     print("Stopping early!!!!!")
+            #     break
+
+            if (i % self.ckpt_interval == 0) or (i == self.epochs-1):
+                logging.info(f"Saving checkpoint at epoch {i}.")
+                torch.save({
+                    'epoch': i,
+                    'state_dict': self.net.state_dict(),
+                    'optimizer_state_dict': self.optimizer.state_dict(),
+                    'scheduler_state_dict': self.scheduler.state_dict(),
+                    'loss': result['training loss'],
+                    'val loss': result['validation loss']
+                }, os.path.join(self.ckpt_path, f"ckpts_{i}.pt"))
+
+        # self.net.train()
+        if self.model_type == "autoencoder":
+            torch.save({'net': 'AutoEncoder', 'state_dict': self.net.state_dict()}, self.save_path)
+        else:
+            torch.save({'net': 'SleceNet', 'state_dict': self.net.state_dict()}, self.save_path)
+
+        log = f"Saved model to {self.save_path}"
+        logging.info(log)
+        if self.enable_wandb:
+            wandb.finish()
+        # except Exception as e:
+        #     logging.error(f"Exception at main train: {e}")
 
     def train_step(self, epoch):
         raise NotImplementedError("train_step() must be implemented in the child class")
@@ -141,7 +142,7 @@ class Train:
         if len(sorted_files) > 0:
             latest_checkpoint = sorted_files[-1]
             logging.info(f"Latest checkpoint file:{latest_checkpoint}")
-            checkpoint = torch.load(latest_checkpoint)
+            checkpoint = torch.load(os.path.join(checkpoint_dir, latest_checkpoint))
         else:
             logging.info("No checkpoint files found.")
         return checkpoint
@@ -150,23 +151,28 @@ class Train:
 class TrainAutoEncoder(Train):
     def __init__(self, net, train_loader, val_loader, run_paths, config=None, title=None, is_cuda=False,
                  max_count=0):
-        super().__init__(net=net, config=config, run_paths=run_paths, is_cuda=is_cuda, model_type="autoencoder")
+        super().__init__(net=net, config=config, run_paths=run_paths, is_cuda=is_cuda, model_type="autoencoder",
+                         dataset_name="kitti")
         self.dataloader = train_loader
-        self.val_loader = val_loader
-        self.optimizer = torch.optim.SGD(self.net.parameters(),
-                                         lr=config["autoencoder"]["learning_rate"],
-                                         momentum=config["autoencoder"]["momentum"],
-                                         weight_decay=config["autoencoder"]["weight_decay"])
+        self.test_dataloader = val_loader
+        self.l2_lambda = config["autoencoder"]["wd_lambda"]
+        # self.optimizer = torch.optim.SGD(self.net.parameters(),
+        #                                  lr=config["autoencoder"]["learning_rate"],
+        #                                  momentum=config["autoencoder"]["momentum"],
+        #                                  weight_decay=config["autoencoder"]["weight_decay"])
         # Use warmup learning rate
         # post decay and step sizes come in epochs and we want it in steps
         steps_per_epoch = len(self.dataloader)
-        up_steps = int(config["autoencoder"]["wup_epochs"] * steps_per_epoch)
-        final_decay = config["autoencoder"]["lr_decay"] ** (1 / steps_per_epoch)
-        self.scheduler = warmupLR(optimizer=self.optimizer,
-                                  lr=config["autoencoder"]["learning_rate"],
-                                  warmup_steps=up_steps,
-                                  momentum=config["autoencoder"]["momentum"],
-                                  decay=final_decay)
+        # self.weight_decay = self.l2_lambda / (2 * steps_per_epoch)
+        self.weight_decay = config["autoencoder"]["weight_decay"]
+        logging.info(self.weight_decay)
+        # up_steps = int(config["autoencoder"]["wup_epochs"] * steps_per_epoch)
+        # final_decay = config["autoencoder"]["lr_decay"] ** (1 / steps_per_epoch)
+        # self.scheduler = warmupLR(optimizer=self.optimizer,
+        #                           lr=config["autoencoder"]["learning_rate"],
+        #                           warmup_steps=up_steps,
+        #                           momentum=config["autoencoder"]["momentum"],
+        #                           decay=final_decay)
 
         # self.optimizer = torch.optim.Adam(self.net.parameters(),
         #                                   lr=config["autoencoder"]["learning_rate"],
@@ -175,21 +181,20 @@ class TrainAutoEncoder(Train):
         #                                   eps=1e-8)
         self.optimizer = torch.optim.AdamW(self.net.parameters(),
                                            lr=self.learning_rate,
-                                           weight_decay=float(config["autoencoder"]["weight_decay"]),
-                                           eps=1e-8)
+                                           eps=1e-8, weight_decay=self.weight_decay)
         # self.scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer=self.optimizer,
         #                                                    base_lr=config["autoencoder"]["learning_rate"],
         #                                                    max_lr=0.0068, step_size_up=30,
         #                                                    step_size_down=60, cycle_momentum=False)
 
-        # self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer,
-        #                                                      max_lr=0.0068,
-        #                                                      epochs=self.epochs,
-        #                                                      steps_per_epoch=steps_per_epoch,
-        #                                                      cycle_momentum=False,
-        #                                                      anneal_strategy='linear')
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer,
+                                                             max_lr=self.learning_rate,
+                                                             epochs=self.epochs,
+                                                             steps_per_epoch=steps_per_epoch,
+                                                             cycle_momentum=False,
+                                                             anneal_strategy='linear')
 
-        self.ssim_loss = pytorch_ssim.SSIM(window_size=16)
+        self.ssim_loss_fn = pytorch_ssim.SSIM(window_size=16)
 
         checkpoint = self.load_checkpoint(self.ckpt_path)
         self.start_epoch = 0
@@ -200,132 +205,143 @@ class TrainAutoEncoder(Train):
             if checkpoint["epoch"] < self.epochs:
                 self.start_epoch = checkpoint["epoch"]
             self.net.load_state_dict(checkpoint['model_state_dict'])
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            # self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            # self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
         self.title = title
         self.max_count = max_count
+        self.loss = 0.0
+        self.ssim_loss = 0.0
+        self.psnr_loss = 0.0
+        self.diff_loss = 0.0
+        self.mask_loss = 0.0
+        self.mask_loss = 0.0
+
+    def reset(self):
+        self.loss = 0.0
+        self.ssim_loss = 0.0
+        self.psnr_loss = 0.0
+        self.diff_loss = 0.0
+        self.mask_loss = 0.0
+        self.mask_loss = 0.0
+
+    def prediction_step(self, inputs, i_epoch=0, progress_view=False):
+        inputs = self.todevice(inputs)
+        # path = inputs.pop('path')
+        inputs = self.todevice(inputs)
+        img = inputs.pop('img')
+        mask = inputs.pop('mask')
+        pred = self.net(img)
+        loss, metrics = autoencoder_loss_fn(pred, img, mask)
+
+        self.ssim_loss += metrics["ssim loss"].detach().item()
+        self.psnr_loss += metrics["psnr loss"].detach().item()
+        self.diff_loss += metrics["diff loss"].detach().item()
+        self.mask_loss += metrics["mask loss"].detach().item()
+
+        if progress_view:
+            image_title = f'{self.title} - Epoch {i_epoch}'
+            show_visual_progress(img, pred, self.progress_path, title=image_title, loss=loss)
+        return loss
 
     def loss_fn(self, pred, img, mask):
         # Reconstruction loss
         patch_loss = patch_mse_loss(pred, img, mask)
         mse_loss = ae_loss_criterion(pred, img, mask)
-        ssim_metric = self.ssim_loss(img, pred)
+        ssim_metric = self.ssim_loss_fn(img, pred)
         return {"loss": patch_loss, "mse": mse_loss, "ssim": ssim_metric}
 
     def train_step(self, epoch):
-        image_title = ""
-        for i in range(self.start_epoch, self.epochs):
-            self.net.train()
-            train_losses = 0.0
-            mse_loss = 0.0
-            ssim = 0.0
-            after_lr = 0.0
-            try:
-                for idx, inputs in enumerate(tqdm(self.dataloader)):
-                    path = inputs.pop('path')
-                    inputs = self.todevice(inputs)
-                    img = inputs.pop('img')
-                    mask = inputs.pop('mask')
+        self.net.train()
+        train_losses = 0.0
+        for _, inputs in enumerate(tqdm(self.dataloader)):
+            loss = self.prediction_step(inputs)
 
-                    self.optimizer.zero_grad()
-                    pred = self.net(img)
-                    losses = self.loss_fn(pred, img, mask)
-                    loss = losses["loss"]
-                    if torch.isinf(loss) or torch.isnan(loss):
-                        print(loss)
-                        print(path)
-                        break
-                    loss.backward()
-                    self.optimizer.step()
-                    self.scheduler.step()
-                    train_losses += loss.detach().item()
-                    mse_loss += losses["mse"].detach().item()
-                    ssim += losses["ssim"].detach().item()
-                    # del loss, pred
-                    # torch.cuda.empty_cache()
-                if self.title:
-                    image_title = f'{self.title} - Epoch {i}'
-                before_lr = self.optimizer.param_groups[0]["lr"]
-                after_lr = self.optimizer.param_groups[0]["lr"]
-                logging.info("Epoch %d: Optimizer lr %.4f -> %.4f" % (i, before_lr, after_lr))
-                self.train_loss = train_losses / len(self.dataloader)
-                self.evaluate_autoencoder(title=image_title, epoch=i)
-            except Exception as e:
-                logging.error(f"Exception at train: {e}")
-            yield {"epoch": i,
-                   "training loss": self.train_loss,
-                   "validation loss": self.val_loss,
-                   "ssim": ssim / len(self.dataloader),
-                   "mse": mse_loss / len(self.dataloader),
-                   "learning rate": after_lr}
+            # l1_regularization = torch.tensor(0.)
+            # for param in self.net.parameters():
+            #     l1_regularization += torch.norm(param, 1)
+            #
+            # # Add regularization term to the loss
+            # loss += self.l1_lambda * l1_regularization
 
-    def evaluate_autoencoder(self, title, epoch, progress_view=True):
-        logging.info(f"evaluation at epoch: {epoch}")
-        try:
-            val_losses = 0.0
-            mse_loss = 0.0
-            ssim = 0.0
-            self.net.eval()
-            # for idx, batch in enumerate(tqdm(self.dataloader)):
-            #     path = batch.pop('path')
-            #     batch = self.todevice(batch)
-            #     img = batch.pop('img')
-            #     mask = batch.pop('mask')
-            #     pred = self.net(img)
-            #     losses = self.loss_fn(pred, img, mask)
-            #     loss = losses["loss"]
-            #     losses += loss.detach().item()
-            #     if torch.isinf(loss) or torch.isnan(loss):
-            #         print(loss)
-            #         print(path)
-            with torch.no_grad():
-                for idx, batch in enumerate(tqdm(self.val_loader)):
-                    path = batch.pop('path')
-                    batch = self.todevice(batch)
-                    img = batch.pop('img')
-                    mask = batch.pop('mask')
-                    pred = self.net(img)
-                    losses = self.loss_fn(pred, img, mask)
-                    loss = losses["loss"]
-                    val_losses += loss.detach().item()
-                    mse_loss += losses["mse"].detach().item()
-                    ssim += losses["ssim"].detach().item()
-                    if torch.isinf(loss) or torch.isnan(loss):
-                        print(loss)
-                        print(path)
-                    if progress_view:
-                        show_visual_progress(img, pred, self.progress_path, title=title, loss=loss)
-                        progress_view = False
-                    # del loss, pred
-                    # torch.cuda.empty_cache()
-            # with torch.no_grad():
-            logging.info(f"Validation mse: {mse_loss / len(self.val_loader)}, ssim:{ssim / len(self.val_loader)}")
-            self.val_loss = val_losses / len(self.val_loader)
-        except Exception as e:
-            logging.error(f"Exception : {e}")
+            assert not (torch.isinf(loss) or torch.isnan(loss)), "Train Loss value is NaN"
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            self.scheduler.step()
+
+            train_losses += loss.detach().item()
+            del loss
+            torch.cuda.empty_cache()
+
+        before_lr = self.optimizer.param_groups[0]["lr"]
+        after_lr = self.optimizer.param_groups[0]["lr"]
+        logging.info("Epoch %d: optimizer lr %.6f -> %.6f" % (epoch, before_lr, after_lr))
+        self.loss = train_losses / len(self.dataloader)
+        result = {"epoch": epoch,
+                  "training loss": self.loss,
+                  "ssim loss": self.ssim_loss / len(self.dataloader),
+                  "psnr loss": self.psnr_loss / len(self.dataloader),
+                  "diff loss": self.diff_loss / len(self.dataloader),
+                  "mask loss": self.mask_loss / len(self.dataloader),
+                  "learning rate": after_lr}
+        self.reset()
+        return result
+
+    def validate_step(self, i_epoch, progress_view=True):
+        logging.info(f"evaluation at epoch: {i_epoch}")
+        val_losses = 0.0
+        self.net.eval()
+        with torch.no_grad():
+            for idx, inputs in enumerate(tqdm(self.test_dataloader)):
+                if progress_view:
+                    loss = self.prediction_step(inputs, i_epoch=i_epoch, progress_view=progress_view)
+                    progress_view = False
+                else:
+                    loss = self.prediction_step(inputs)
+                assert not (torch.isinf(loss) or torch.isnan(loss)), "Val Loss value is NaN"
+                val_losses += loss.detach().item()
+            self.loss = val_losses / len(self.test_dataloader)
+
+        result = {
+            "validation loss": self.loss,
+            "validation - ssim loss": self.ssim_loss / len(self.test_dataloader),
+            "validation - psnr loss": self.psnr_loss / len(self.test_dataloader),
+            "validation - diff loss": self.diff_loss / len(self.test_dataloader),
+            "validation - mask loss": self.mask_loss / len(self.test_dataloader)
+        }
+        self.reset()
+        return result
 
 
 class TrainSleceNet(Train):
     def __init__(self, net, dataloader, test_dataloader, config, run_paths, device, is_cuda=False):
-        super().__init__(net=net, config=config, run_paths=run_paths, is_cuda=is_cuda, model_type="s2lece")
+        super().__init__(net=net, config=config, run_paths=run_paths, is_cuda=is_cuda, model_type="s2lece",
+                         dataset_name="kitti")
         self.device = device
         self.dataloader = dataloader
         self.test_dataloader = test_dataloader
+        # self.l2_lambda = config["s2lece"]["wd_lambda"]
         steps_per_epoch = len(self.dataloader)
+        self.weight_decay = float(config["s2lece"]["weight_decay"])
+        logging.info(f"weight decay : {self.weight_decay}")
         self.optimizer = torch.optim.AdamW(self.net.parameters(),
                                            lr=self.learning_rate,
-                                           eps=float(config["s2lece"]["epsilon"]))
+                                           eps=float(config["s2lece"]["epsilon"]), weight_decay=self.weight_decay)
         # weight_decay=float(config["s2lece"]["weight_decay"])
         # self.scheduler = torch.optim.lr_scheduler.OneCycleLR(self.optimizer,
         #                                                      max_lr=self.learning_rate, epochs=self.epochs,
         #                                                      steps_per_epoch=steps_per_epoch,
         #                                                      pct_start=0.05, cycle_momentum=False,
         #                                                      anneal_strategy='linear')
-        # self.scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer=self.optimizer,
-        #                                                    base_lr=self.learning_rate,
-        #                                                    max_lr=self.learning_rate * 10, step_size_up=5,
-        #                                                    step_size_down=10, cycle_momentum=False)
+        # total_iterations = steps_per_epoch * self.epochs
+        step_size = 5 * steps_per_epoch
+        self.scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer=self.optimizer,
+                                                           base_lr=0.0006442,
+                                                           max_lr=self.learning_rate, step_size_up=step_size,
+                                                           cycle_momentum=False)
+        # self.scaler = GradScaler(enabled=config["s2lece"]["mixed_precision"])
+        # self.clip = config["s2lece"]["clip"]
         checkpoint = self.load_checkpoint(self.ckpt_path)
         if checkpoint is None:
             self.start_epoch = 0
@@ -333,8 +349,8 @@ class TrainSleceNet(Train):
         else:
             logging.info("checkpoint model...")
             self.start_epoch = checkpoint["epoch"]
-            self.net.load_state_dict(checkpoint['model_state_dict'])
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.net.load_state_dict(checkpoint['state_dict'])
+            # self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         self.loss = 0.0
         self.epe_loss = 0.0
@@ -358,14 +374,16 @@ class TrainSleceNet(Train):
         self.mask_loss = 0.0
 
     def prediction_step(self, inputs, i_epoch=0, progress_view=False):
+        path = inputs.pop('path')
         inputs = self.todevice(inputs)
+        # print(f"inputs type {inputs['img1'].device}")
         img1 = inputs.pop('img1')
         img2 = inputs.pop('img2')
         target_flow = inputs.pop('flow')
         mask1 = inputs.pop('mask1')
-        pred_flow = self.net(img1, img2)
-        pred_flow *= mask1
-        flow_loss, metrics = flow_loss_fn(img1, img2, target_flow, pred_flow, mask1)
+        pred_flow = self.net(img1, img2, mask1)
+        # print(f"predflow type {pred_flow[-1].device}")
+        flow_loss, metrics = flow_loss_fn(img1, img2, target_flow, pred_flow, mask1, max_flow=600)
 
         self.epe_loss += metrics["flow"]["epe loss"].detach().item()
         self.rmse_loss += metrics["flow"]["rmse loss"].detach().item()
@@ -377,19 +395,29 @@ class TrainSleceNet(Train):
         self.mask_loss += metrics["reconstruct"]["mask loss"].detach().item()
 
         if progress_view:
-            compare_flow(target_flow, pred_flow, self.progress_path, loss=flow_loss, idx=i_epoch)
-        return flow_loss
+            compare_flow(target_flow, pred_flow[-1], self.progress_path, loss=flow_loss, idx=i_epoch)
+        return flow_loss, path
 
     def train_step(self, epoch):
         self.net.train()
         train_losses = 0.0
         for _, inputs in enumerate(tqdm(self.dataloader)):
-            flow_loss = self.prediction_step(inputs)
-            assert not (torch.isinf(flow_loss) or torch.isnan(flow_loss)), "Train Loss value is NaN"
+            flow_loss, path = self.prediction_step(inputs)
+            assert not (torch.isinf(flow_loss) or torch.isnan(flow_loss)), f"Loss value is {flow_loss} at {path}"
+            # if torch.isinf(flow_loss) or torch.isnan(flow_loss):
+            #     logging.info(f"Train Loss value is {flow_loss} at {path}")
             self.optimizer.zero_grad()
             flow_loss.backward()
             self.optimizer.step()
+            self.scheduler.step()
+            # print(f"flow loss {flow_loss}")
+            # self.scaler.scale(flow_loss).backward()
+            # self.scaler.unscale_(self.optimizer)
+            # torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.clip)
+            #
+            # self.scaler.step(self.optimizer)
             # self.scheduler.step()
+            # self.scaler.update()
 
             train_losses += flow_loss.detach().item()
             del flow_loss
@@ -420,11 +448,13 @@ class TrainSleceNet(Train):
         with torch.no_grad():
             for idx, inputs in enumerate(tqdm(self.test_dataloader)):
                 if progress_view:
-                    flow_loss = self.prediction_step(inputs, i_epoch=i_epoch, progress_view=progress_view)
+                    flow_loss, path = self.prediction_step(inputs, i_epoch=i_epoch, progress_view=progress_view)
                     progress_view = False
                 else:
-                    flow_loss = self.prediction_step(inputs)
-                assert not (torch.isinf(flow_loss) or torch.isnan(flow_loss)), "Val Loss value is NaN"
+                    flow_loss, path = self.prediction_step(inputs)
+                assert not (torch.isinf(flow_loss) or torch.isnan(flow_loss)), f"Loss value is {flow_loss} at {path}"
+                # if torch.isinf(flow_loss) or torch.isnan(flow_loss):
+                #     logging.info(f"Train Loss value is {flow_loss} at {path}")
                 val_losses += flow_loss.detach().item()
             self.loss = val_losses / len(self.test_dataloader)
 

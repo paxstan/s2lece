@@ -36,3 +36,13 @@ def torch_set_gpu(gpus):
         print('Launching on CPU')
 
     return cuda
+
+
+def load_encoder_state_dict(feature_net, ae_path):
+    if os.path.exists(ae_path):
+        fe_net_weights = torch.load(ae_path)
+        feature_net.load_state_dict(fe_net_weights["state_dict"])
+        print(f"AE Model loaded from {ae_path}")
+    else:
+        print(f"AE Model is not in the path {ae_path}")
+    return feature_net.encoder.state_dict()

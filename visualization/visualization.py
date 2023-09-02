@@ -1,15 +1,11 @@
-# Copyright 2019-present NAVER Corp.
-# CC BY-NC-SA 3.0
-# Available only for non-commercial use
 import logging
-import pdb
 import copy
 import numpy as np
 import matplotlib
-# matplotlib.use('Agg')
+
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import open3d as o3d
-from models.model_utils import coords_grid
 
 
 def make_colorwheel():
@@ -128,12 +124,12 @@ def flow_to_color(flow_uv, clip_flow=None, convert_to_bgr=False):
     u = flow_uv[:, :, 0]
     v = flow_uv[:, :, 1]
 
-    rad = np.sqrt(np.square(u) + np.square(v))
-    rad_max = np.max(rad)
+    # rad = np.sqrt(np.square(u) + np.square(v))
+    # rad_max = np.max(rad)
 
     epsilon = 1e-5
-    u = u / (rad_max + epsilon)
-    v = v / (rad_max + epsilon)
+    # u = u / (rad_max + epsilon)
+    # v = v / (rad_max + epsilon)
 
     return flow_compute_color(u, v, convert_to_bgr)
 
@@ -185,9 +181,14 @@ def show_visual_progress(org_img, pred_img, path, title=None, loss=0):
         logging.info(f"Issue in show  progress function : Exception: {e}")
 
 
-def visualize_point_cloud(pred_flow, mask_valid, metadata, transform=False):
-    # pred_flow = pred_flow.detach().squeeze().numpy()
-    c, h, w = pred_flow.shape
+def visualize_point_cloud(pred_flow, initial_flow, idx1, idx2, xyz1, xyz2, mask_valid, path, transform=False):
+    pred_flow = pred_flow.detach().squeeze().numpy()
+    initial_flow = initial_flow.detach().squeeze().numpy()
+    idx1 = idx1.detach().squeeze().numpy()
+    idx2 = idx2.detach().squeeze().numpy()
+    xyz1 = xyz1.detach().squeeze().numpy()
+    xyz2 = xyz2.detach().squeeze().numpy()
+    mask_valid = mask_valid.detach().squeeze().numpy()
 
     # x_img = pred_flow[:, :, 0].reshape(-1).astype(int)
     # y_img = pred_flow[:, :, 1].reshape(-1).astype(int)
@@ -196,20 +197,20 @@ def visualize_point_cloud(pred_flow, mask_valid, metadata, transform=False):
 
     # x_img = pred_flow[0]
     # y_img = pred_flow[1]
-    pred_flow[0, np.invert(mask_valid)] = 0
-    pred_flow[1, np.invert(mask_valid)] = 0
+    # pred_flow[0, np.invert(mask_valid)] = 0
+    # pred_flow[1, np.invert(mask_valid)] = 0
+    #
+    # abs_flow = np.zeros_like(pred_flow)
+    # abs_flow[0, :, :] = np.arange(h)[:, np.newaxis]
+    # abs_flow[1, :, :] = np.arange(w)
+    abs_flow = np.floor(initial_flow + pred_flow)
+    # abs_flow = abs_flow.transpose(1, 2, 0)
 
-    abs_flow = np.zeros_like(pred_flow)
-    abs_flow[0, :, :] = np.arange(h)[:, np.newaxis]
-    abs_flow[1, :, :] = np.arange(w)
-    abs_flow = np.floor(abs_flow + pred_flow)
-    abs_flow = abs_flow.transpose(1, 2, 0)
+    x_img = abs_flow[0].astype(int)
+    y_img = abs_flow[1].astype(int)
 
-    x_img = abs_flow[:, :, 0].astype(int)
-    y_img = abs_flow[:, :, 1].astype(int)
-
-    inv_x = np.where(x_img >= 32)
-    inv_y = np.where(y_img >= 1024)
+    inv_x = np.where(x_img >= 64)
+    inv_y = np.where(y_img >= 2048)
 
     x_img[inv_x] = inv_x[0]
     y_img[inv_y] = inv_y[1]
@@ -217,20 +218,36 @@ def visualize_point_cloud(pred_flow, mask_valid, metadata, transform=False):
     x_img = x_img.reshape(-1)
     y_img = y_img.reshape(-1)
 
-    idx1 = metadata['idx1'].reshape(-1, 1)
-    idx2 = metadata['idx2']
-    corres_idx2 = (idx2[x_img.astype(int), y_img.astype(int)]).reshape(-1, 1)
-    corres_id = np.hstack((idx1, corres_idx2))
+    # idx1 = metadata['idx1'].reshape(-1, 1)
+    # idx2 = metadata['idx2']
+    corres_idx2 = (idx2[x_img.astype(int), y_img.astype(int)])
+
+    count = np.bincount(corres_idx2[corres_idx2 != -1])
+
+    non_unique_val = np.where(count > 1)[0]
+    non_unique_indices = np.array([])
+    for i in non_unique_val:
+        non_unique_id = np.where(corres_idx2 == i)[0]
+        non_unique_indices = np.concatenate((non_unique_indices, non_unique_id))
+        # iiid = np.column_stack(iid).ravel().tolist()
+        # non_unique_indices.append(iiid)
+    # non_unique_indices = [np.column_stack(np.where(corres_idx2 == i)).ravel().tolist() for i in true_val]
+    non_unique_indices = non_unique_indices.astype(int)
+    corres_idx2[non_unique_indices] = -1
+
+    corres_idx2 = corres_idx2.reshape(-1, 1)
+
+    corres_id = np.hstack((idx1.reshape(-1, 1), corres_idx2))
     corres_id[np.invert(mask_valid.flatten()), :] = [-1, -1]
 
     valid_index = np.where((corres_id[:, 0] != -1) & (corres_id[:, 1] != -1))[0]
     # valid_corres_id = corres_id[~np.all(corres_id == [-1, -1], axis=1)]
     valid_corres_id = corres_id[valid_index]
 
-    visualize_correspondence(metadata['xyz1'], metadata['xyz2'], valid_corres_id, transform)
+    visualize_correspondence(xyz1, xyz2, valid_corres_id, transform, path)
 
 
-def visualize_correspondence(source_point, target_point, valid_corres_id, transform):
+def visualize_correspondence(source_point, target_point, valid_corres_id, transform, path):
     # Create two point clouds
     pcd1 = o3d.geometry.PointCloud()
     pcd1.points = o3d.utility.Vector3dVector(source_point)  # Random point cloud 1
@@ -271,7 +288,7 @@ def visualize_correspondence(source_point, target_point, valid_corres_id, transf
 
     # Create lines between corresponding points
     lines = []
-    for i in range(valid_corres_id.shape[0]):
+    for i in range(valid_corres_id.shape[0] // 10):
         line = o3d.geometry.LineSet()
         line.points = o3d.utility.Vector3dVector(
             [pcd1.points[valid_corres_id[i][0]], pcd2.points[valid_corres_id[i][1]]])
@@ -290,7 +307,7 @@ def visualize_correspondence(source_point, target_point, valid_corres_id, transf
     vis.run()
 
     # Capture a screenshot of the visualizer window
-    # vis.capture_screen_image(filename="/home/paxstan/Documents/research_project/code/runs/visualization.png")
+    vis.capture_screen_image(filename=f"{path}/visualization.png")
 
     # Save the image
     # o3d.io.write_image("visualization.png", image)
@@ -368,4 +385,3 @@ def visualize_different_viewpoints(point_cloud):
 
     # Close the visualization window
     vis.destroy_window()
-

@@ -291,6 +291,9 @@ def get_pixel_match(source, target, nearest_distance, height, width):
     flow, flow_img = build_flow(source_x_y, target_x_y, corres, mask, height, width)
 
     pixel_count = flow.shape[1] * flow.shape[2]
+    non_zero_flow = ((flow[0] == 0) & (flow[1] == 0))
+    csv_dict["non_zero_flow"] = np.count_nonzero(non_zero_flow)
+    csv_dict["non_zero_flow_percent"] = round(((np.count_nonzero(non_zero_flow) / pixel_count) * 100), 4)
     csv_dict[f"non zero flow along x (out of {pixel_count} pixels)"] = np.count_nonzero(flow[0])
     csv_dict[f"non zero flow along x in percent"] = round(((np.count_nonzero(flow[0]) / pixel_count) * 100), 4)
     csv_dict[f"non zero flow along y (out of {pixel_count} pixels)"] = np.count_nonzero(flow[1])
@@ -344,7 +347,8 @@ def build_flow(source_idx, target_idx, indices, n_mask, height, width):
     return flow, flow_img
 
 
-def synth_flow(source, target):
+def synth_flow(source, target, height, width):
+    csv_dict = dict()
     source_xyz = np.load(os.path.join(source, 'un_proj_xyz.npy'))
     target_xyz = np.load(os.path.join(target, 'un_proj_xyz.npy'))
 
@@ -355,17 +359,28 @@ def synth_flow(source, target):
     target_mask = np.load(os.path.join(target, 'valid_mask.npy'))
 
     corres = np.arange(source_xyz.shape[0])
+    csv_dict["correspondence"] = len(corres)
 
     source_x_y = map_points_xy(source_idx, source_mask, source_xyz.shape[0])
     target_x_y = map_points_xy(target_idx, target_mask, target_xyz.shape[0])
 
     # mask = source_mask * target_mask
     mask = np.ones_like(corres).astype(bool)
+    csv_dict["valid (neighbor and unique)"] = np.count_nonzero(mask.astype(int))
 
     # corres = corres[mask]
 
-    flow = build_flow(source_x_y, target_x_y, corres, mask)
+    flow, flow_img = build_flow(source_x_y, target_x_y, corres, mask, height, width)
 
-    flow_img = flow_to_color(flow.transpose(1, 2, 0))
+    pixel_count = flow.shape[1] * flow.shape[2]
+    non_zero_flow = ((flow[0] == 0) & (flow[1] == 0))
+    csv_dict["non_zero_flow"] = np.count_nonzero(non_zero_flow)
+    csv_dict["non_zero_flow_percent"] = round(((np.count_nonzero(non_zero_flow) / pixel_count) * 100), 4)
+    csv_dict[f"non zero flow along x (out of {pixel_count} pixels)"] = np.count_nonzero(flow[0])
+    csv_dict[f"non zero flow along x in percent"] = round(((np.count_nonzero(flow[0]) / pixel_count) * 100), 4)
+    csv_dict[f"non zero flow along y (out of {pixel_count} pixels)"] = np.count_nonzero(flow[1])
+    csv_dict[f"non zero flow y in percent"] = round(((np.count_nonzero(flow[1]) / pixel_count) * 100), 4)
 
-    return flow, flow_img
+    # flow_img = flow_to_color(flow.transpose(1, 2, 0))
+
+    return flow, flow_img, [csv_dict]

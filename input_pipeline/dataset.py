@@ -1,8 +1,6 @@
 import os
 import numpy as np
 from scipy.spatial.transform import Rotation as R
-from input_pipeline.preprocessing import preprocess_range_image
-from PIL import Image
 import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as tvf
@@ -10,43 +8,10 @@ import torchvision.transforms as tvf
 to_tensor = tvf.Compose([tvf.ToTensor()])
 
 
-# class Dataset(object):
-#     """ Base class for a dataset. To be overloaded.
-#     """
-#     root = ''
-#     img_dir = ''
-#     nimg = 0
-#
-#     def __len__(self):
-#         return self.nimg
-#
-#     def __repr__(self):
-#         res = 'Dataset: %s\n' % self.__class__.__name__
-#         res += '  %d images' % self.nimg
-#         res += '\n  root: %s...\n' % self.root
-#         return res
-
-
 class LidarBase(Dataset):
     def __init__(self, root):
         Dataset.__init__(self)
         self.root = root
-
-    def get_image(self, img_idx):
-        folder_path = os.path.join(self.root, img_idx)
-        rang = self.load_np_file(folder_path + '/range.npy')
-        img = Image.fromarray(rang)
-        return img
-
-    def get_valid_range_mask(self, idx):
-        folder_path = os.path.join(self.root, idx)
-        mask = np.load(folder_path + '/valid_mask.npy')
-        return mask
-
-    def get_xyz(self, idx):
-        folder_path = os.path.join(self.root, idx)
-        xyz = np.load(folder_path + '/xyz.npy')
-        return xyz
 
     @staticmethod
     def load_np_file(path):
@@ -54,14 +19,16 @@ class LidarBase(Dataset):
 
 
 class RealPairDataset(LidarBase):
-    def __init__(self, root):
-        LidarBase.__init__(self, root)
-        self.root = root
-        self.gt_pose = np.load(f'{root}/ground_truth_pose.npy') if os.path.exists(f'{root}/ground_truth_pose.npy') \
+    def __init__(self, dataset):
+        LidarBase.__init__(self, dataset["data_dir"])
+        self.root = dataset["data_dir"]
+        self.gt_pose = np.load(f'{self.root}/ground_truth_pose.npy') if os.path.exists(f'{self.root}/ground_truth_pose.npy') \
             else None
-        self.arr_corres = np.load(f'{root}/corres.npy', allow_pickle=True) if os.path.exists(
-            f'{root}/corres.npy') else None
+        self.arr_corres = np.load(f'{self.root}/corres.npy', allow_pickle=True) if os.path.exists(
+            f'{self.root}/corres.npy') else None
         self.npairs = self.arr_corres.shape[0]
+        self.sensor_img_means = dataset["mean"]
+        self.sensor_img_stds = dataset["std"]
 
     def __len__(self):
         self.npairs = self.arr_corres.shape[0]
@@ -101,84 +68,54 @@ class RealPairDataset(LidarBase):
 
         img1 = self.load_np_file(os.path.join(self.root, source, 'range.npy'))
         img2 = self.load_np_file(os.path.join(self.root, target, 'range.npy'))
-        mask1 = np.load(os.path.join(self.root, source, 'valid_mask.npy'))
-        mask2 = np.load(os.path.join(self.root, target, 'valid_mask.npy'))
-
-        # idx1 = self.load_np_file(os.path.join(self.root, source, 'idx.npy'))
-        # idx2 = self.load_np_file(os.path.join(self.root, target, 'idx.npy'))
-        #
-        # xyz1 = self.load_np_file(os.path.join(self.root, source, 'xyz.npy'))
-        # xyz2 = self.load_np_file(os.path.join(self.root, target, 'xyz.npy'))
+        mask1 = self.load_np_file(os.path.join(self.root, source, 'valid_mask.npy'))
+        mask2 = self.load_np_file(os.path.join(self.root, target, 'valid_mask.npy'))
+        idx1 = self.load_np_file(os.path.join(self.root, source, 'idx.npy'))
+        idx2 = self.load_np_file(os.path.join(self.root, target, 'idx.npy'))
+        xyz1 = self.load_np_file(os.path.join(self.root, source, 'un_proj_xyz.npy'))
+        xyz2 = self.load_np_file(os.path.join(self.root, target, 'un_proj_xyz.npy'))
 
         flow = self.load_np_file(os.path.join(self.root, "correspondence", corres_dir, 'flow.npy'))
         initial_flow = self.load_np_file(os.path.join(self.root, source, 'initial_flow.npy'))
-        # mask_valid_in_2 = self.load_np_file(os.path.join(self.root,
-        #                                                  "correspondence", corres_dir, 'mask_valid_2.npy'))
 
+        # img1 = (img1 - self.sensor_img_means) / self.sensor_img_stds
         img1 = img1 * mask1
         img1[img1 == -0.0] = 0.0
 
+        # img2 = (img2 - self.sensor_img_means) / self.sensor_img_stds
         img2 = img2 * mask2
         img2[img2 == -0.0] = 0.0
 
-        # img1[mask1 == 1] = self.reverse_intensity(img1[mask1 == 1])
-        # img2[mask2 == 1] = self.reverse_intensity(img2[mask2 == 1])
-
-        # h1, w1 = img1.shape
-        # h2, w2 = img2.shape
-        #
-        # img1 = img1.reshape(-1)
-        # img2 = img2.reshape(-1)
-        #
-        # img1[np.invert(mask1)] = 0
-        # img2[np.invert(mask2)] = 0
-
-        # reshape masks of valid pixels to image sizes
-        # mask1 = mask1.reshape(h1, w1)
-        # mask2 = mask2.reshape(h2, w2)
-
-        # redefine flow mask with invalid pixels in image1 and mask generated by finding flow
         mask = (mask1 * mask2).astype(bool)
+        # flow = flow.transpose((1, 2, 0))
+        # initial_flow = initial_flow.transpose((1, 2, 0))
 
-        # set flow for invalid pixels to nan, which is ignored during training
-        # flow[~mask, :] = 0
-
-        # crop image
-        # img2 = Image.fromarray(img2.reshape(h1, w1))
-        # img1 = Image.fromarray(img1.reshape(h1, w1))
-        # img1 = img1.reshape(h1, w1)
-        # img2 = img2.reshape(h2, w2)
-        # img1[img1 < 0] = 0
-        # img2[img2 < 0] = 0
-        # img1 = (img1 - np.min(img1)) / (np.max(img1) - np.min(img1))
-        # img2 = (img2 - np.min(img2)) / (np.max(img2) - np.min(img2))
-
-        # meta = {'flow': flow.transpose((2, 0, 1)), 'initial_flow': initial_flow.transpose((2, 0, 1)),
-        #         'mask1': mask1.astype(bool), 'mask2': mask2.astype(bool),
-        #         'idx1': idx1, 'idx2': idx2, 'xyz1': xyz1, 'xyz2': xyz2}
-
-        # img_a, edge_weight_a = preprocess_range_image(img1)
-        # img_b, edge_weight_a = preprocess_range_image(img2)
-        # flow = np.float32(metadata['flow'])
-        # initial_flow = np.float32(metadata['initial_flow'])
-        # flow_mask = metadata.get('flow_mask', np.ones(aflow.shape[:2], np.uint8))
-        # mask1 = metadata.get('mask1', np.ones(flow.shape[:2], np.uint8))
-        # mask2 = metadata.get('mask2', np.ones(flow.shape[:2], np.uint8))
-
-        # img1 = img1.astype(float)
-        # img2 = img2.astype(float)
-        flow = flow.transpose((1, 2, 0))
-        initial_flow = initial_flow.transpose((1, 2, 0))
+        # result = dict(
+        #     img1=to_tensor(img1).to(torch.float32),
+        #     img2=to_tensor(img2).to(torch.float32),
+        #     flow=to_tensor(flow),
+        #     initial_flow=to_tensor(initial_flow),
+        #     mask1=to_tensor(mask1),
+        #     mask2=to_tensor(mask2),
+        #     mask=to_tensor(mask),
+        #     path=corres_dir
+        # )
 
         result = dict(
-            img1=to_tensor(img1).to(torch.float32),
-            img2=to_tensor(img2).to(torch.float32),
-            flow=to_tensor(flow),
-            initial_flow=to_tensor(initial_flow),
-            mask1=to_tensor(mask1),
-            mask2=to_tensor(mask2),
-            mask=to_tensor(mask)
+            img1=torch.unsqueeze(torch.from_numpy(img1), 0).to(torch.float32),
+            img2=torch.unsqueeze(torch.from_numpy(img2), 0).to(torch.float32),
+            flow=torch.from_numpy(flow),
+            initial_flow=torch.from_numpy(initial_flow),
+            mask1=torch.unsqueeze(torch.from_numpy(mask1), 0),
+            mask2=torch.unsqueeze(torch.from_numpy(mask2), 0),
+            mask=torch.unsqueeze(torch.from_numpy(mask), 0),
+            idx1=torch.unsqueeze(torch.from_numpy(idx1), 0),
+            idx2=torch.unsqueeze(torch.from_numpy(idx2), 0),
+            xyz1=torch.unsqueeze(torch.from_numpy(xyz1), 0),
+            xyz2=torch.unsqueeze(torch.from_numpy(xyz2), 0),
+            path=corres_dir
         )
+
         return result
 
 
@@ -193,12 +130,12 @@ class LidarData:
 
 
 class SingleDataset(LidarBase):
-    def __init__(self, root):
-        LidarBase.__init__(self, root)
-        self.root = root
+    def __init__(self, dataset):
+        LidarBase.__init__(self, dataset["data_dir"])
+        self.root = dataset["data_dir"]
         self.npairs = self.get_count()
-        self.sensor_img_means = np.array([5.7224, -0.3047, -1.8498, 0.42288], dtype=float)
-        self.sensor_img_stds = np.array([11.8312, 1.1713, 9.0264, 9.2832], dtype=float)
+        self.sensor_img_means = dataset["mean"]
+        self.sensor_img_stds = dataset["std"]
 
     def get_count(self):
         abspath = os.path.abspath(self.root)
@@ -211,34 +148,13 @@ class SingleDataset(LidarBase):
     def __getitem__(self, idx):
         img = self.load_np_file(os.path.join(self.root, str(idx), 'range.npy'))
         mask = self.load_np_file(os.path.join(self.root, str(idx), 'valid_mask.npy'))
+
+        # img = (img - self.sensor_img_means) / self.sensor_img_stds
         img = img * mask
         img[img == -0.0] = 0.0
 
-        # img[mask.astype(bool)] = (img[mask.astype(bool)] - self.sensor_img_means) / self.sensor_img_stds
-        # img = (img - self.sensor_img_means[0]) / self.sensor_img_stds[0]
-
-        # img_pp = img[mask.astype(bool)]
-        # img[mask.astype(bool)] = (img[mask.astype(bool)] - img_pp.mean()) / img_pp.std()
         result = dict(
-            img=to_tensor(img).to(torch.float32),
-            mask=to_tensor(mask),
-            path=os.path.join(self.root, str(idx))
+            img=torch.unsqueeze(torch.from_numpy(img), 0).to(torch.float32),
+            mask=torch.unsqueeze(torch.from_numpy(mask), 0)
         )
         return result
-
-
-def histogram_equalization(image):
-    # Compute the histogram
-    hist, bins = np.histogram(image.flatten(), 256, [0, 256])
-
-    # Compute the Cumulative Distribution Function (CDF)
-    cdf = hist.cumsum()
-    cdf_normalized = cdf * hist.max() / cdf.max()
-
-    # Intensity transformation function
-    equalized_values = (cdf_normalized[image] * 255).astype('uint8')
-
-    # Create the equalized image
-    equalized_image = np.reshape(equalized_values, image.shape)
-
-    return equalized_image

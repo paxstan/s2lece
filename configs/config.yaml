@@ -1,8 +1,7 @@
 #general
 train_fe: False
 gpu:
-  - 0
-dataset_choice: 8
+  - -1
 datasets:
   - 'exp01'
   - 'exp02'
@@ -13,9 +12,46 @@ datasets:
   - 'synth_data'
   - 'synth_data2'
   - 'kitti_03'
+  - 'kitti_04'
 
 #dataset creation
 dataset:
+  synth_kitti_03:
+    path: '../../data/kitti/03'
+    dataset_path: 'velodyne'
+    ros_bag: ''
+    ground_truth: '03_lidar_tum.txt'
+    data_dir: '../dataset/synth_kitti_03'
+    generate_ground_truth: True
+    mean: 12.12
+    std: 12.32
+  synth_kitti_04:
+    path: '../../data/kitti/04'
+    dataset_path: 'velodyne'
+    ros_bag: ''
+    ground_truth: '04_lidar_tum.txt'
+    data_dir: '../dataset/synth_kitti_04'
+    generate_ground_truth: True
+    mean: 12.12
+    std: 12.32
+  synth_np_kitti_03:
+    path: '../../data/kitti/03'
+    dataset_path: 'velodyne'
+    ros_bag: ''
+    ground_truth: '03_lidar_tum.txt'
+    data_dir: '../dataset/synth_np_kitti_03'
+    generate_ground_truth: False
+    mean: 12.12
+    std: 12.32
+  synth_np_kitti_04:
+    path: '../../data/kitti/04'
+    dataset_path: 'velodyne'
+    ros_bag: ''
+    ground_truth: '04_lidar_tum.txt'
+    data_dir: '../dataset/synth_np_kitti_04'
+    generate_ground_truth: False
+    mean: 12.12
+    std: 12.32
   kitti_03:
     path: '../../data/kitti/03'
     dataset_path: 'velodyne'
@@ -23,6 +59,17 @@ dataset:
     ground_truth: '03_lidar_tum.txt'
     data_dir: '../dataset/kitti_03'
     generate_ground_truth: True
+    mean: 12.12
+    std: 12.32
+  kitti_04:
+    path: '../../data/kitti/04'
+    dataset_path: 'velodyne'
+    ros_bag: ''
+    ground_truth: '04_lidar_tum.txt'
+    data_dir: '../dataset/kitti_04'
+    generate_ground_truth: True
+    mean: 12.12
+    std: 12.32
   synth_data:
     path: '../../data/hilti/rosbag/exp05_imu'
     ros_bag: 'exp05_construction_upper_level_2.bag'
@@ -82,11 +129,13 @@ correspondence:
 
 # Auto encoder
 autoencoder:
-  save_path: 'fe_ae_darknet_full.pt'
-  learning_rate: 0.01
-  weight_decay: 0.0001
-  momentum: 0.9          # sgd momentum
-  epoch: 50
+  save_path: 'fe_ae_full.pt'
+  pretrained_path: '../runs/run_2023-08-22T18-31-27-576457/fe_ae_full.pt'
+  learning_rate: 0.0001
+  weight_decay: 0.00005
+  momentum: 0.9
+  epoch: 25
+  wd_lambda: 0.001
   wup_epochs: 1
   lr_decay: 0.995        # learning rate decay per epoch after initial cycle (from min lr)
   epsilon: 0.001
@@ -98,29 +147,30 @@ autoencoder:
     in_channel: 1
     dropout: 0.01
     bn_d: 0.01
-    OS: 32
-    model: 21
     type: 'fe'
 
 # flow model
 s2lece:
   save_path: 'slece_model.pt'
-  ae_path: '/home/paxstan/Documents/research_project/code/runs/run_2023-08-07T18-46-39-454227/fe_ae_darknet_full.pt'
+  ae_path: '../runs/run_2023-08-24T09-43-18-611951/fe_ae_full.pt'
+  pretrained_path: '../runs/1_run_final_report_kitti/slece_model.pt'
   field_name: 'x, y, z, intensity'
-  learning_rate: 0.001
+  learning_rate: 0.00085
   weight_decay: 0.00005
+  wd_lambda: 0.01
   mixed_precision: True
   clip: 1.0
-  epoch: 50
+  epoch: 100
   wup_epochs: 1
   batch_size: 4
-  ckpt_interval: 10
+  ckpt_interval: 4
   early_stopping: 10
   enable_wandb: True
   epsilon: 1e-8
+  iters: 5
   params:
     embedded_dim: 16
-    dropout: 0.0
+    dropout: 0.01
 
 #lidarparameter
 lidar_param:

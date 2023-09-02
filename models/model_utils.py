@@ -657,13 +657,3 @@ def abs_flow_builder(initial_flow, pred_flow, idx1, idx2):
     flow = flow.permute(1, 0, 2, 3)
 
     return flow, mask_valid_in_2
-
-
-def load_encoder_state_dict(feature_net, ae_path):
-    if os.path.exists(ae_path):
-        fe_net_weights = torch.load(ae_path)
-        feature_net.load_state_dict(fe_net_weights["state_dict"])
-        print(f"AE Model loaded from {ae_path}")
-    else:
-        print(f"AE Model is not in the path {ae_path}")
-    return feature_net.encoder.state_dict()
