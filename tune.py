@@ -5,8 +5,8 @@ import ray
 from ray import tune
 from ray.air import session
 from ray.tune.schedulers import ASHAScheduler
-# from train import TrainSleceNet
-# from models.model import SleceNet
+from train import TrainS2leceNet
+from models.model import S2leceNet
 # from input_pipeline.dataloader import threaded_loader
 
 
@@ -55,10 +55,10 @@ class TuneS2leceNet:
 
     @staticmethod
     def tune_s2lecenet(config, device, iscuda, iters, dataloader, test_dataloader, run_paths):
-        net = SleceNet(config, device, iters=iters).to(device)
+        net = S2leceNet(config, device, iters=iters).to(device)
         loader = threaded_loader(dataloader, batch_size=4, iscuda=iscuda, threads=1)
         test_loader = threaded_loader(test_dataloader, batch_size=4, iscuda=iscuda, threads=1)
-        train = TrainSleceNet(net=net, dataloader=loader, test_dataloader=test_loader, config=config,
+        train = TrainS2leceNet(net=net, dataloader=loader, test_dataloader=test_loader, config=config,
                               run_paths=run_paths, is_cuda=iscuda)
         for result in train.train_slecenet():
             tune.report(loss=result["val loss"], train_loss=result["train loss"])

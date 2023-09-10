@@ -6,16 +6,18 @@ import sensor_msgs.point_cloud2 as pc2
 import cv2
 import open3d as o3d
 import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.patches import ConnectionPatch
 from utils.data_conversion import (project_point_cloud, perform_kdtree, LidarDataConverter, build_flow, map_points_xy,
                                    get_pixel_match)
 from visualization.visualization import visualize_correspondence, flow_to_color, visualize_point_cloud, \
-    visualize_different_viewpoints
+    visualize_different_viewpoints, compare_flow
 from scipy.spatial import cKDTree
 import pandas as pd
 import utils.data_conversion
+import torch
+
+matplotlib.use('Agg')
 
 
 def projection_convert(points, height=32, width=1024):
@@ -679,9 +681,10 @@ data_dir = "../dataset/test_new"
 corres_path = os.path.join(data_dir, "correspondence")
 gt_gen_path = os.path.join(data_dir, "ground_truth_pose.npy")
 
-lidar_data_converter = LidarDataConverter(
-    lidar_param=lidar_param, lidar_2_imu=lidar_to_imu,
-    save_dir=data_dir, generate_gt=True)
+
+# lidar_data_converter = LidarDataConverter(
+#     lidar_param=lidar_param, lidar_2_imu=lidar_to_imu,
+#     save_dir=data_dir, generate_gt=True)
 
 
 def convertor_fn(data, i):
@@ -841,6 +844,29 @@ def octree_nearest_neighbor():
     # target_octree.traverse(f_traverse)
 
 
+def recreate_optical_flow_image():
+    for i in range(99):
+        target_flow = np.load(f"../runs/1_run_final_report_kitti/progress/{i}_target_optical_flow.npy").transpose(2, 0,
+                                                                                                                  1)
+        pred_flow = np.load(f"../runs/1_run_final_report_kitti/progress/{i}_pred_optical_flow.npy").transpose(2, 0, 1)
+        compare_flow(torch.unsqueeze(torch.from_numpy(target_flow), 0),
+                     torch.unsqueeze(torch.from_numpy(pred_flow), 0),
+                     idx=i, path="../runs/1_run_final_report_kitti/progress_recreate",
+                     loss=0.0)
+
+
+def recreate_visulize_point_cloud():
+    # for i in range(99):
+    i = 99
+    target_flow = np.load(f"../runs/1_run_final_report_kitti/progress/{i}_target_optical_flow.npy").transpose(2, 0,
+                                                                                                              1)
+    pred_flow = np.load(f"../runs/1_run_final_report_kitti/progress/{i}_pred_optical_flow.npy").transpose(2, 0, 1)
+    compare_flow(torch.unsqueeze(torch.from_numpy(target_flow), 0),
+                 torch.unsqueeze(torch.from_numpy(pred_flow), 0),
+                 idx=i, path="../runs/1_run_final_report_kitti/progress_recreate",
+                 loss=0.0)
+
+
 if __name__ == "__main__":
     # Call the main function when the script is run
     # get_flow_matrix()
@@ -866,6 +892,7 @@ if __name__ == "__main__":
     # optical_flow_calculation_workflow()
     # test_pipeline()
     # generate_synth_corres2()
-    optical_flow_calculation_workflow()
+    # optical_flow_calculation_workflow()
     # octree_nearest_neighbor()
+    recreate_optical_flow_image()
     print("flow")

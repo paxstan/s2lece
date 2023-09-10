@@ -11,6 +11,9 @@ import pandas as pd
 
 
 class DatasetCreator:
+    """
+    Class for extracting dataset from HILTI data
+    """
     def __init__(self, config):
         self.config = config
         self.dataset = config["dataset"][config["datasets"][config["dataset_choice"]]]
@@ -18,6 +21,7 @@ class DatasetCreator:
         self.generate_ground_truth = self.dataset["generate_ground_truth"]
         self.ros_bag = os.path.join(self.dataset['path'], self.dataset['ros_bag'])
         self.ground_truth = os.path.join(self.dataset['path'], self.dataset['ground_truth'])
+        self.lidar_param = config["lidar_param"]["hilti"]
 
         if self.generate_ground_truth:
             with open(self.ground_truth) as file:
@@ -47,6 +51,9 @@ class DatasetCreator:
         return os.path.abspath(self.root)
 
     def point_cloud_extractor(self):
+        """
+        function that extracts the set of files from one scan
+        """
         i = 0
         list_gt = []
         bag = rosbag.Bag(self.ros_bag)
@@ -56,7 +63,7 @@ class DatasetCreator:
 
                 if self.generate_ground_truth:
 
-                    assert i < 20, "i should be less than length of gt file"  # len(self.ground_truth_imu)-1
+                    assert i < len(self.ground_truth_imu)-1, "i should be less than length of gt file"
                     if self.ground_truth_imu[i][0] == time.to_time():
                         # process and save point cloud in the form of npy file
                         self.lidar_data_converter(data, i, self.ground_truth_imu[i], self.ground_truth_imu[i + 1])
@@ -81,14 +88,15 @@ class DatasetCreator:
         logging.info("Point cloud extraction from ROS Bag completed....")
 
     def generate_pairs(self):
+        """
+        function to identify correspondence pairrs and generate optical flows
+        """
         list_of_pairs = []
         dt = np.dtype([('source', np.int32), ('target', np.int32), ('corres', 'object')])
         poses = np.load(self.gt_gen_path)
         pair_threshold = self.correspondence_param["pair_distance"]
         for i, pose in enumerate(poses):
             try:
-                # pair_dict = dict()
-                # pair_dict["source"] = i
                 source_path = os.path.join(self.root, str(i))
 
                 distances = np.linalg.norm((pose - poses), axis=1)
@@ -102,7 +110,9 @@ class DatasetCreator:
                         pair["target"] = ix
                         pair["corres_dir"] = f"corres_{i}_{ix}"
 
-                        flow = get_pixel_match(source_path, target_path, self.correspondence_param["nearest_neighbor"])
+                        flow = get_pixel_match(source_path, target_path, self.correspondence_param["nearest_neighbor"],
+                                               height=self.lidar_param["height"],
+                                               width=self.lidar_param["width"])
 
                         dir_path = os.path.join(self.corres_path, pair["corres_dir"])
                         if not os.path.exists(dir_path):
@@ -125,6 +135,9 @@ class DatasetCreator:
 
 
 class SyntheticDatasetCreator:
+    """
+    Class to create synthetic dataset from HILTI data
+    """
     def __init__(self, config):
         self.config = config
         self.dataset = config["dataset"][config["datasets"][config["dataset_choice"]]]
@@ -167,11 +180,13 @@ class SyntheticDatasetCreator:
         return os.path.abspath(self.root)
 
     def convertor_fn(self, data, i, pose1, pose2):
-        # save_dir = self.lidar_data_converter(data, i)
         save_dir = self.lidar_data_converter(data, i, pose1, pose2)
         return save_dir
 
     def point_cloud_extractor(self):
+        """
+        function that extracts the set of files from one scan and similar synthetic scans
+        """
         i = 0
         source_idx = 0
         target_idx = 1
@@ -199,7 +214,8 @@ class SyntheticDatasetCreator:
                             rotation = source_copy.get_rotation_matrix_from_xyz((0, 0, rotate_z))
                             source_copy.rotate(rotation, center=(0, 0, 0))
                             new_data = np.hstack([np.asarray(source_copy.points), timestamp_data])
-                            self.convertor_fn(new_data, target_idx)
+                            self.convertor_fn(new_data, target_idx,
+                                              self.ground_truth_imu[i], self.ground_truth_imu[i + 1])
                             self.generate_synth_corres(source_idx, target_idx, str(rotate_z))
 
                         source_idx = target_idx + 1
@@ -213,6 +229,7 @@ class SyntheticDatasetCreator:
         logging.info("Point cloud extraction from ROS Bag completed....")
 
     def generate_synth_corres(self, source_idx, target_idx, transform_param):
+        """create correspondence pair and its optical flow from synthetic data"""
         source_path = os.path.join(self.root, str(source_idx))
         target_path = os.path.join(self.root, str(target_idx))
         pair = dict()
@@ -237,6 +254,7 @@ class SyntheticDatasetCreator:
 
 
 class KittiDatasetCreator:
+    """Class to extract dataset from KITTI Data"""
     def __init__(self, config, dataset_name, synth=False):
         self.config = config
         self.synth = synth
@@ -256,9 +274,6 @@ class KittiDatasetCreator:
 
         with open(self.ground_truth) as file:
             self.ground_truth_imu = np.array([tuple(map(float, line.rstrip().split(" "))) for line in file])
-        # if self.generate_ground_truth:
-        #
-        #     # self.ground_truth_imu = self.ground_truth_imu[1:]
 
         self.lidar_data_converter = LidarDataConverter(
             lidar_param=self.lidar_param, save_dir=self.dataset["data_dir"],
@@ -290,6 +305,9 @@ class KittiDatasetCreator:
         return self.dataset
 
     def point_cloud_extractor(self):
+        """
+            function that extracts the set of files from one scan
+        """
         list_gt = []
         for i, pose in enumerate(self.ground_truth_imu):
             pcd_path = os.path.join(self.dataset_path, f"{i:06d}.pcd")
@@ -304,6 +322,9 @@ class KittiDatasetCreator:
         logging.info("Point cloud extraction completed....")
 
     def synth_point_cloud_extractor(self):
+        """
+            function that extracts the set of files from one scan and similar synthetic scans
+        """
         source_idx = 0
         target_idx = 1
         list_gt = []
@@ -337,12 +358,14 @@ class KittiDatasetCreator:
                 list_gt.append(self.ground_truth_imu[i])
 
             source_idx = target_idx + 1
-            # target_idx = source_idx + 1
             print(f"processed... {i}")
         np.save(self.gt_gen_path, np.array(list_gt))
         logging.info("Point cloud extraction completed....")
 
     def generate_pairs(self):
+        """
+            function to identify correspondence pairrs and generate optical flows
+        """
         # poses = np.load(self.gt_gen_path)[:, 1:4]
         timestamps = np.load(self.gt_gen_path)[:, 0]
         pair_threshold = self.correspondence_param["pair_distance"]
@@ -394,6 +417,7 @@ class KittiDatasetCreator:
         logging.info("Finished generating pairs....")
 
     def generate_synth_corres(self, source_idx, target_idx, transform_param):
+        """create correspondence pair and its optical flow from synthetic data"""
         source_path = os.path.join(self.root, str(source_idx))
         target_path = os.path.join(self.root, str(target_idx))
         pair = dict()
@@ -415,10 +439,6 @@ class KittiDatasetCreator:
         df = pd.DataFrame(csv_dict)
 
         df.to_csv(file_name, index=False)
-
-        # f = open(os.path.join(dir_path, "tranform_param.txt"), "a")
-        # f.write(f"z rotation: {transform_param}")
-        # f.close()
 
         self.list_of_pairs.append(pair)
         print(f"corres count at {source_idx}: {len(self.list_of_pairs)}")

@@ -2,10 +2,9 @@ import logging
 import copy
 import numpy as np
 import matplotlib
-
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import open3d as o3d
+matplotlib.use('Agg')
 
 
 def make_colorwheel():
@@ -135,6 +134,14 @@ def flow_to_color(flow_uv, clip_flow=None, convert_to_bgr=False):
 
 
 def compare_flow(target_flow, pred_flow, path, idx=1, loss=0):
+    """
+    function to visualize flow comparison
+    :param target_flow: ground truth optical flow
+    :param pred_flow: predicted optical flow
+    :param path: path to save
+    :param idx: id of the comparison
+    :param loss: loss between target and predicted
+    """
     predicted_flow = np.floor(pred_flow[0, :, :, :].cpu().detach().numpy()).transpose(1, 2, 0)
     target_flow = target_flow[0, :, :, :].cpu().detach().squeeze().numpy().transpose(1, 2, 0)
 
@@ -157,10 +164,17 @@ def compare_flow(target_flow, pred_flow, path, idx=1, loss=0):
 
     np.save(f"{path}/{idx}_pred_optical_flow.npy", predicted_flow)
     np.save(f"{path}/{idx}_target_optical_flow.npy", target_flow)
-    # plt.show()
 
 
 def show_visual_progress(org_img, pred_img, path, title=None, loss=0):
+    """
+    function to visualize comparison between actual and predicted image from autoencoder
+    :param org_img: actual image
+    :param pred_img: predicted image
+    :param path: path to save the comparison
+    :param title: name of the comparison image file
+    :param loss: loss between actual and predicted image
+    """
     try:
         org_img = org_img.detach().cpu().numpy()[0, 0]
         pred_img = pred_img.detach().cpu().numpy()[0, 0]
@@ -182,6 +196,9 @@ def show_visual_progress(org_img, pred_img, path, title=None, loss=0):
 
 
 def visualize_point_cloud(pred_flow, initial_flow, idx1, idx2, xyz1, xyz2, mask_valid, path, transform=False):
+    """
+    function to extract correspondence between source and target from optical flow
+    """
     pred_flow = pred_flow.detach().squeeze().numpy()
     initial_flow = initial_flow.detach().squeeze().numpy()
     idx1 = idx1.detach().squeeze().numpy()
@@ -190,22 +207,7 @@ def visualize_point_cloud(pred_flow, initial_flow, idx1, idx2, xyz1, xyz2, mask_
     xyz2 = xyz2.detach().squeeze().numpy()
     mask_valid = mask_valid.detach().squeeze().numpy()
 
-    # x_img = pred_flow[:, :, 0].reshape(-1).astype(int)
-    # y_img = pred_flow[:, :, 1].reshape(-1).astype(int)
-    # x_img[np.invert(mask_valid)] = 0
-    # y_img[np.invert(mask_valid)] = 0
-
-    # x_img = pred_flow[0]
-    # y_img = pred_flow[1]
-    # pred_flow[0, np.invert(mask_valid)] = 0
-    # pred_flow[1, np.invert(mask_valid)] = 0
-    #
-    # abs_flow = np.zeros_like(pred_flow)
-    # abs_flow[0, :, :] = np.arange(h)[:, np.newaxis]
-    # abs_flow[1, :, :] = np.arange(w)
     abs_flow = np.floor(initial_flow + pred_flow)
-    # abs_flow = abs_flow.transpose(1, 2, 0)
-
     x_img = abs_flow[0].astype(int)
     y_img = abs_flow[1].astype(int)
 
@@ -218,20 +220,13 @@ def visualize_point_cloud(pred_flow, initial_flow, idx1, idx2, xyz1, xyz2, mask_
     x_img = x_img.reshape(-1)
     y_img = y_img.reshape(-1)
 
-    # idx1 = metadata['idx1'].reshape(-1, 1)
-    # idx2 = metadata['idx2']
     corres_idx2 = (idx2[x_img.astype(int), y_img.astype(int)])
-
     count = np.bincount(corres_idx2[corres_idx2 != -1])
-
     non_unique_val = np.where(count > 1)[0]
     non_unique_indices = np.array([])
     for i in non_unique_val:
         non_unique_id = np.where(corres_idx2 == i)[0]
         non_unique_indices = np.concatenate((non_unique_indices, non_unique_id))
-        # iiid = np.column_stack(iid).ravel().tolist()
-        # non_unique_indices.append(iiid)
-    # non_unique_indices = [np.column_stack(np.where(corres_idx2 == i)).ravel().tolist() for i in true_val]
     non_unique_indices = non_unique_indices.astype(int)
     corres_idx2[non_unique_indices] = -1
 
@@ -241,13 +236,13 @@ def visualize_point_cloud(pred_flow, initial_flow, idx1, idx2, xyz1, xyz2, mask_
     corres_id[np.invert(mask_valid.flatten()), :] = [-1, -1]
 
     valid_index = np.where((corres_id[:, 0] != -1) & (corres_id[:, 1] != -1))[0]
-    # valid_corres_id = corres_id[~np.all(corres_id == [-1, -1], axis=1)]
     valid_corres_id = corres_id[valid_index]
 
     visualize_correspondence(xyz1, xyz2, valid_corres_id, transform, path)
 
 
 def visualize_correspondence(source_point, target_point, valid_corres_id, transform, path):
+    """function to visualize correspondence"""
     # Create two point clouds
     pcd1 = o3d.geometry.PointCloud()
     pcd1.points = o3d.utility.Vector3dVector(source_point)  # Random point cloud 1
@@ -294,23 +289,14 @@ def visualize_correspondence(source_point, target_point, valid_corres_id, transf
             [pcd1.points[valid_corres_id[i][0]], pcd2.points[valid_corres_id[i][1]]])
         line.lines = o3d.utility.Vector2iVector([[0, 1]])
         lines.append(line)
-        # Create TriangleMesh for text
-        # text_mesh = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2)
-        # text_mesh.translate(text_position)
-        # text_mesh.paint_uniform_color([1, 0, 0])
 
         vis.add_geometry(line)
-
-    # vis.register_animation_callback(register_mouse_callback)
 
     # Visualize the point clouds and lines
     vis.run()
 
     # Capture a screenshot of the visualizer window
-    vis.capture_screen_image(filename=f"{path}/visualization.png")
-
-    # Save the image
-    # o3d.io.write_image("visualization.png", image)
+    vis.capture_screen_image(filename=f"{path}_vis.png")
 
     vis.destroy_window()
 
@@ -337,18 +323,6 @@ def visualize_different_viewpoints(point_cloud):
         rand_trans_y = np.random.uniform(-1, 1)
         rand_trans_z = np.random.uniform(-1, 1)
 
-        # Create rotation matrix
-        # rotation_matrix = np.array([
-        #     [np.cos(rand_rot_y) * np.cos(rand_rot_z), -np.cos(rand_rot_y) * np.sin(rand_rot_z), np.sin(rand_rot_y), 0],
-        #     [np.sin(rand_rot_x) * np.sin(rand_rot_y) * np.cos(rand_rot_z) + np.cos(rand_rot_x) * np.sin(rand_rot_z),
-        #      -np.sin(rand_rot_x) * np.sin(rand_rot_y) * np.sin(rand_rot_z) + np.cos(rand_rot_x) * np.cos(rand_rot_z),
-        #      -np.sin(rand_rot_x) * np.cos(rand_rot_y), 0],
-        #     [-np.cos(rand_rot_x) * np.sin(rand_rot_y) * np.cos(rand_rot_z) + np.sin(rand_rot_x) * np.sin(rand_rot_z),
-        #      np.cos(rand_rot_x) * np.sin(rand_rot_y) * np.sin(rand_rot_z) + np.sin(rand_rot_x) * np.cos(rand_rot_z),
-        #      np.cos(rand_rot_x) * np.cos(rand_rot_y), 0],
-        #     [0, 0, 0, 1]
-        # ])
-
         rotation_matrix = np.array([
             [1, 0, 0, 0],
             [0, 1, 0, 0],
@@ -374,14 +348,6 @@ def visualize_different_viewpoints(point_cloud):
         transformed_cloud.transform(transformation_matrix)
 
         o3d.io.write_point_cloud(f"../point_cloud_t_{i}.pcd", transformed_cloud)
-
-        # Add the transformed point cloud to the visualization
-        # vis.create_window()
-        # vis.add_geometry(transformed_cloud)
-        # vis.run()
-        # vis.update_geometry()
-        # vis.poll_events()
-        # vis.update_renderer()
 
     # Close the visualization window
     vis.destroy_window()

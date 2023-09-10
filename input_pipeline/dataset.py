@@ -9,6 +9,9 @@ to_tensor = tvf.Compose([tvf.ToTensor()])
 
 
 class LidarBase(Dataset):
+    """
+    Base class for LidarDataset
+    """
     def __init__(self, root):
         Dataset.__init__(self)
         self.root = root
@@ -19,6 +22,9 @@ class LidarBase(Dataset):
 
 
 class RealPairDataset(LidarBase):
+    """
+    Class to load dataset with correspondences
+    """
     def __init__(self, dataset):
         LidarBase.__init__(self, dataset["data_dir"])
         self.root = dataset["data_dir"]
@@ -34,34 +40,7 @@ class RealPairDataset(LidarBase):
         self.npairs = self.arr_corres.shape[0]
         return self.npairs
 
-    @staticmethod
-    def get_homog_matrix(pose):
-        """
-        Transforms a pose to a homogeneous matrix
-        :param pose: [x, y, z, qx, qy, qz, qw]
-        :return: 4x4 homogeneous matrix
-        """
-        m = np.eye(4)
-        rot = R.from_quat(pose[3:])
-        for i in range(3):
-            m[i, 3] = pose[i]
-        m[0:3, 0:3] = rot.as_matrix()
-        return m
-
-    @staticmethod
-    def reverse_intensity(intensity_values):
-        # reversed_intensity = intensity_values.max() / intensity_values
-        inverse_depth = 1 / intensity_values
-
-        # Rescale the reversed values to the original intensity range
-        normalized_inverse_depth = (inverse_depth - inverse_depth.min()) / (
-                    inverse_depth.max() - inverse_depth.min())
-
-        return normalized_inverse_depth
-
     def __getitem__(self, idx):
-        """ returns (img1, img2, `metadata`)
-        """
         source = str(self.arr_corres[idx][0])
         target = str(self.arr_corres[idx][1])
         corres_dir = self.arr_corres[idx][2]
@@ -87,19 +66,6 @@ class RealPairDataset(LidarBase):
         img2[img2 == -0.0] = 0.0
 
         mask = (mask1 * mask2).astype(bool)
-        # flow = flow.transpose((1, 2, 0))
-        # initial_flow = initial_flow.transpose((1, 2, 0))
-
-        # result = dict(
-        #     img1=to_tensor(img1).to(torch.float32),
-        #     img2=to_tensor(img2).to(torch.float32),
-        #     flow=to_tensor(flow),
-        #     initial_flow=to_tensor(initial_flow),
-        #     mask1=to_tensor(mask1),
-        #     mask2=to_tensor(mask2),
-        #     mask=to_tensor(mask),
-        #     path=corres_dir
-        # )
 
         result = dict(
             img1=torch.unsqueeze(torch.from_numpy(img1), 0).to(torch.float32),
@@ -119,17 +85,10 @@ class RealPairDataset(LidarBase):
         return result
 
 
-class LidarData:
-    def __init__(self, path):
-        self.corres = np.load(f'{path}/corres.npy') if os.path.exists(f'{path}/corres.npy') else None
-        self.idx_data = np.load(f'{path}/idx.npy') if os.path.exists(f'{path}/idx.npy') else None
-        self.world_frame = np.load(f'{path}/world_frame.npy') if os.path.exists(f'{path}/world_frame.npy') else None
-        self.range_data = np.load(f'{path}/range.npy') if os.path.exists(f'{path}/range.npy') else None
-        self.xyz_data = np.load(f'{path}/xyz.npy') if os.path.exists(f'{path}/xyz.npy') else None
-        self.valid_mask = np.load(f'{path}/valid_mask.npy') if os.path.exists(f'{path}/valid_mask.npy') else None
-
-
 class SingleDataset(LidarBase):
+    """
+    Class for loading individual scan images
+    """
     def __init__(self, dataset):
         LidarBase.__init__(self, dataset["data_dir"])
         self.root = dataset["data_dir"]

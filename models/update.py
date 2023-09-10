@@ -77,7 +77,6 @@ class BasicUpdateBlock(nn.Module):
         super(BasicUpdateBlock, self).__init__()
         self.encoder = BasicMotionEncoder(corr_channels=corr_channels)
         self.gru = SepConvGRU(hidden_dim=hidden_dim, input_dim=128 + hidden_dim)
-        # self.gru = SepConvGRU(hidden_dim=hidden_dim, input_dim=160)
         self.flow_head = FlowHead(hidden_dim, hidden_dim=256)
         self.learn_upsample = learn_upsample
         if learn_upsample:

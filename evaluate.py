@@ -10,6 +10,7 @@ matplotlib.use('Agg')
 
 
 def evaluate(net, type_net, input_data, run_paths, random=False):
+    """Function to evaluate networks with trained weights"""
     with torch.no_grad():
         if type_net == "ae":
             img = input_data.pop('img')
@@ -49,7 +50,8 @@ def evaluate(net, type_net, input_data, run_paths, random=False):
             pd_flow *= valid_flow_mask
             if not random:
                 compare_flow(target_flow, pd_flow, idx=path_id, path=run_paths['path_model_id'], loss=flow_loss)
-                visualize_point_cloud(pd_flow, initial_flow, idx1, idx2, xyz1, xyz2, mask, run_paths['path_model_id'])
+                visualize_point_cloud(pd_flow, initial_flow, idx1, idx2, xyz1, xyz2, mask,
+                                      f"{run_paths['path_model_id']}/{path_id}")
             else:
                 pd_flow = pred_flow.detach().squeeze().numpy()
                 pred_flow_img = flow_to_color(pd_flow.transpose(1, 2, 0))
@@ -57,24 +59,25 @@ def evaluate(net, type_net, input_data, run_paths, random=False):
                 visualize_point_cloud(pd_flow, initial_flow, idx1, idx2, xyz1, xyz2, mask, run_paths['path_model_id'])
 
 
-def random_evaluation(net):
-    def load(id1, id2):
-        img1 = np.load(f'dataset/data/ae_val_data/{id1}/range.npy')
-        idx1 = np.load(f'dataset/data/ae_val_data/{id1}/idx.npy')
-        xyz1 = np.load(f'dataset/data/ae_val_data/{id1}/xyz.npy')
-        img2 = np.load(f'dataset/data/ae_val_data/{id2}/range.npy')
-        idx2 = np.load(f'dataset/data/ae_val_data/{id2}/idx.npy')
-        xyz2 = np.load(f'dataset/data/ae_val_data/{id2}/xyz.npy')
-        mask2 = np.load(f'dataset/data/ae_val_data/{id2}/valid_mask.npy')
-        return img1, img2, {'idx1': idx1, 'idx2': idx2, 'xyz1': xyz1, 'xyz2': xyz2, 'mask2': mask2}
-
-    img_a, img_b, metadata = load(10, 1000)
-    mask_b = metadata.get('mask2')
-    evaluate(net, img_a, img_b, valid_mask=mask_b, metadata=metadata, random=True)
+# def random_evaluation(net):
+#     """Function to evaluate S2lece network with trained weights with random pairs"""
+#     def load(id1, id2):
+#         img1 = np.load(f'dataset/data/ae_val_data/{id1}/range.npy')
+#         idx1 = np.load(f'dataset/data/ae_val_data/{id1}/idx.npy')
+#         xyz1 = np.load(f'dataset/data/ae_val_data/{id1}/xyz.npy')
+#         img2 = np.load(f'dataset/data/ae_val_data/{id2}/range.npy')
+#         idx2 = np.load(f'dataset/data/ae_val_data/{id2}/idx.npy')
+#         xyz2 = np.load(f'dataset/data/ae_val_data/{id2}/xyz.npy')
+#         mask2 = np.load(f'dataset/data/ae_val_data/{id2}/valid_mask.npy')
+#         return img1, img2, {'idx1': idx1, 'idx2': idx2, 'xyz1': xyz1, 'xyz2': xyz2, 'mask2': mask2}
+#
+#     img_a, img_b, metadata = load(10, 1000)
+#     mask_b = metadata.get('mask2')
+#     evaluate(net, img_a, img_b, valid_mask=mask_b, metadata=metadata, random=True)
 
 
 def test_network(type_net, dataloader, net):
-    ssim_loss = pytorch_ssim.SSIM(window_size=16)
+    """Function to test networks before training"""
     l1_lambda = 0.001
     with torch.no_grad():
         if type_net == "ae":

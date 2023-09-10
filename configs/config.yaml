@@ -1,5 +1,5 @@
 #general
-train_fe: False
+train_fe: True
 gpu:
   - -1
 datasets:

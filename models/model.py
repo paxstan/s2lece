@@ -1,4 +1,3 @@
-import os.path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,7 +7,7 @@ from models.model_utils import coords_grid
 
 
 class UpdateNet(nn.Module):
-    def __init__(self, params):
+    def __init__(self):
         super().__init__()
         self.update_block = BasicUpdateBlock(corr_channels=243,
                                              hidden_dim=256,
@@ -20,8 +19,6 @@ class UpdateNet(nn.Module):
         n, c, h, w = img.shape
         coords0 = coords_grid(n, h, w // downsample).to(img.device)
         coords1 = coords_grid(n, h, w // downsample).to(img.device)
-
-        # optical flow computed as difference: flow = coords1 - coords0
         return coords0, coords1
 
     @staticmethod
@@ -124,7 +121,7 @@ class CorrBlock:
         return corr / torch.sqrt(torch.tensor(dim).float())
 
 
-def bilinear_sampler(img, coords, mode='bilinear', mask=False):
+def bilinear_sampler(img, coords, mask=False):
     """ Wrapper for grid_sample, uses pixel coordinates """
     H, W = img.shape[-2:]
     xgrid, ygrid = coords.split([1, 1], dim=-1)
@@ -149,7 +146,7 @@ class S2leceNet(nn.Module):
         self.encoder = FeatureExtractorNet(fe_params)
         fe_params["type"] = "cn"
         self.context_net = FeatureExtractorNet(fe_params)
-        self.update = UpdateNet(update_params)
+        self.update = UpdateNet()
 
     def load_encoder(self, state_dict):
         self.encoder.load_state_dict(state_dict)
@@ -158,7 +155,6 @@ class S2leceNet(nn.Module):
         # Unfreeze the parameters of the last layer
         for param in self.encoder.enc4.parameters():
             param.requires_grad = True  # Unfreeze the last layer's parameters
-        # self.encoder.eval()
         print(f"Encoder Model loaded")
 
     def calculate_n_parameters(self):

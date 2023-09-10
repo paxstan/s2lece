@@ -1,8 +1,5 @@
 import torch.nn as nn
-import torch
 from collections import OrderedDict
-from models.model_utils import conv_layer, de_conv_layer
-import torch.nn.functional as F
 
 
 class BasicBlock(nn.Module):
@@ -73,8 +70,6 @@ class FeatureExtractorNet(nn.Module):
                                          stride=(1, 2), model_type=self.model_type, bn_d=self.bn_d)
         self.enc4 = self._make_enc_layer(BasicBlock, [128, 256], 1,
                                          stride=(1, 2), model_type=self.model_type, bn_d=self.bn_d)
-        # self.enc5 = self._make_enc_layer(BasicBlock, [256, 512], 1,
-        #                                  stride=(1, 2), model_type=self.model_type, bn_d=self.bn_d)
 
         # for a bit of fun
         self.dropout = nn.Dropout2d(self.drop_prob)
@@ -144,14 +139,11 @@ class FeatureExtractorNet(nn.Module):
         x, skips, os = self.run_layer(x, self.enc4, skips, os)
         x, skips, os = self.run_layer(x, self.dropout, skips, os)
 
-        # x, skips, os = self.run_layer(x, self.enc5, skips, os)
-        # x, skips, os = self.run_layer(x, self.dropout, skips, os)
-
         return x, skips
 
 
 class Decoder(nn.Module):
-    def __init__(self, params, OS=16, feature_depth=125):
+    def __init__(self, params, feature_depth=125):
         super(Decoder, self).__init__()
         self.backbone_OS = 16
         self.backbone_feature_depth = feature_depth
@@ -159,8 +151,6 @@ class Decoder(nn.Module):
         self.bn_d = params["bn_d"]
 
         # decoder
-        # self.dec5 = self._make_dec_layer(BasicBlock, [512, 256], bn_d=self.bn_d,
-        #                                  stride=(1, 2))
         self.dec4 = self._make_dec_layer(BasicBlock, [256, 128], bn_d=self.bn_d,
                                          stride=(1, 2))
         self.dec3 = self._make_dec_layer(BasicBlock, [128, 64], bn_d=self.bn_d,
@@ -205,7 +195,6 @@ class Decoder(nn.Module):
 
     def forward(self, x, skips):
         os = self.backbone_OS
-        # x, skips, os = self.run_layer(x, self.dec5, skips, os)
         x, skips, os = self.run_layer(x, self.dec4, skips, os)
         x, skips, os = self.run_layer(x, self.dec3, skips, os)
         x, skips, os = self.run_layer(x, self.dec2, skips, os)
@@ -225,10 +214,6 @@ class AutoEncoder(nn.Module):
         super().__init__()
         self.encoder = FeatureExtractorNet(params)
         self.decoder = Decoder(params)
-        # self.head = nn.Sequential(nn.Dropout2d(p=0.01),
-        #                           nn.Conv2d(self.decoder.get_last_depth(),
-        #                                     1, kernel_size=3,
-        #                                     stride=(1, 2), padding=1))
 
     def calculate_n_parameters(self):
         def times(shape):
@@ -244,5 +229,4 @@ class AutoEncoder(nn.Module):
     def forward(self, x):
         y, skips = self.encoder(x)
         y = self.decoder(y, skips)
-        # y = self.head(y)
         return y

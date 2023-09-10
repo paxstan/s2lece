@@ -1,10 +1,10 @@
 import logging
 import torch
 import os
+from torch.utils.data import random_split
 
 
 def set_loggers(path_log=None, logging_level=0, b_stream=False):
-    # std. logger
     logger = logging.getLogger()
     logger.setLevel(logging_level)
 
@@ -46,3 +46,10 @@ def load_encoder_state_dict(feature_net, ae_path):
     else:
         print(f"AE Model is not in the path {ae_path}")
     return feature_net.encoder.state_dict()
+
+
+def random_split_dataset(dataset, percent):
+    train_size = int(percent * len(dataset))  # 80% for training
+    val_size = len(dataset) - train_size
+    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+    return train_dataset, val_dataset

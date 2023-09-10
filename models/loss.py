@@ -9,6 +9,8 @@ if hasattr(F, 'interpolate'):
 
 
 def rmse_loss_fn(pred_flow, target_flow, sparse=True):
+    """Function to calculate Root Mean Square Error (RMSE) between predicted and ground
+    truth flows(sparsity inclusion)"""
     squared_diff = (pred_flow - target_flow) ** 2
 
     rse_loss = torch.sqrt(squared_diff)
@@ -16,45 +18,29 @@ def rmse_loss_fn(pred_flow, target_flow, sparse=True):
     if sparse:
         # invalid flow is defined with both flow coordinates to be exactly 0
         mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
-        # print(mask.shape, rse_loss.shape)
         rse_loss = rse_loss.permute(0, 2, 3, 1)
 
-        # if mask.all():
-        #     rse_loss = torch.tensor(0.0).to(target_flow.device)
         if not mask.all():
             rse_loss = rse_loss[~mask]
-        # print(mask.shape, rse_loss.shape)
 
-    # masked_rse_loss = rse_loss * mask
-
-    # rmse_loss = torch.sum(masked_rse_loss) / torch.sum(mask)
     rmse_loss = rse_loss.mean()
 
     if torch.isnan(rmse_loss):
         rmse_loss = torch.tensor(0.0).to(target_flow.device)
-    # rmse_loss = torch.sqrt(mse_loss)
-
     return rmse_loss
 
 
 def average_angular_error_fn(pred_flow, target_flow, sparse=True):
-    """Calculate the Average Angular Error (AAE) between predicted and ground truth flows."""
+    """Function to calculate Average Angular Error (AAE) between predicted and ground truth flows(sparsity inclusion)"""
 
     dotP = torch.sum(pred_flow * target_flow, dim=1)
     Norm_pred = torch.sqrt(torch.sum(pred_flow * pred_flow, dim=1))
     Norm_true = torch.sqrt(torch.sum(target_flow * target_flow, dim=1))
     ae = 180 / math.pi * torch.acos(dotP / (Norm_pred * Norm_true + 1e-6))
 
-    # ae_mean = torch.sum(ae) / torch.sum(mask)
-    # return ae.mean(1).mean(1)
-    # mean = ae / torch.sum(mask)
-
     if sparse:
         # invalid flow is defined with both flow coordinates to be exactly 0
         mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
-
-        # if mask.all():
-        #     ae = torch.tensor(0.0).to(target_flow.device)
         if not mask.all():
             ae = ae[~mask]
 
@@ -65,14 +51,13 @@ def average_angular_error_fn(pred_flow, target_flow, sparse=True):
 
 
 def epe_loss_fn(input_flow, target_flow, sparse=True, mean=True):
+    """Function to calculate End-Point-Error (EPE) between predicted and ground truth flows(sparsity inclusion)"""
     EPE_map = torch.norm(target_flow - input_flow, 2, 1)
 
     batch_size = EPE_map.size(0)
     if sparse:
         # invalid flow is defined with both flow coordinates to be exactly 0
         mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
-        # if mask.all():
-        #     EPE_map = torch.tensor(0.0).to(target_flow.device)
         if not mask.all():
             EPE_map = EPE_map[~mask]
     if mean:
@@ -82,6 +67,7 @@ def epe_loss_fn(input_flow, target_flow, sparse=True, mean=True):
 
 
 def charbonnier_penalty(x, e=1e-8, delta=0.4, averge=True):
+    """Function to calculate Charbonnier Penalty between predicted and ground image of Autoencoder"""
     p = ((x) ** 2 + e).pow(delta)
     if averge:
         p = p.mean()
@@ -91,6 +77,7 @@ def charbonnier_penalty(x, e=1e-8, delta=0.4, averge=True):
 
 
 def patch_mse_loss(input_images, target_images, mask=None, patch_size=16, step=16):
+    """Function to calculate Mean Square Error (Patch wise) between predicted and ground image of Autoencoder"""
     # Ensure the input images have the same shape
     assert input_images.shape == target_images.shape, "Input and target images must have the same shape"
 
@@ -103,7 +90,6 @@ def patch_mse_loss(input_images, target_images, mask=None, patch_size=16, step=1
     mse_loss = F.mse_loss(input_patches, target_patches, reduction='none')
 
     b, c, h1, w1, p1, p2 = mse_loss.shape
-    # mse_loss = mse_loss.view(mse_loss.shape[0], mse_loss.shape[1], -1).mean(dim=-1)
     mse_loss = mse_loss.reshape(b, c, h1 * w1 * p1 * p2)
     if mask is not None:
         mask_patches = mask.unfold(2, patch_size, step).unfold(3, patch_size, step)
@@ -118,15 +104,12 @@ def patch_mse_loss(input_images, target_images, mask=None, patch_size=16, step=1
 
 
 def mae_loss_fn(pred_flow, target_flow, sparse=True):
+    """Function to calculate Mean Absolute Error between predicted and ground truth flows(sparsity inclusion)"""
     abs_loss = (pred_flow - target_flow).abs()
     if sparse:
         # invalid flow is defined with both flow coordinates to be exactly 0
         mask = (target_flow[:, 0] == 0) & (target_flow[:, 1] == 0)
         abs_loss = abs_loss.permute(0, 2, 3, 1)
-
-        # if mask.all():
-        #     abs_loss = abs_loss
-            # abs_loss = torch.tensor(0.0).to(target_flow.device)
         if not mask.all():
             abs_loss = abs_loss[~mask]
 
@@ -162,9 +145,6 @@ def sequence_loss(flow_preds, target_flow, gamma=0.8):
         i_weight = gamma ** (n_predictions - i - 1)
         i_loss = (flow_preds[i] - target_flow).abs()
         i_loss = i_loss.permute(0, 2, 3, 1)
-        # if mask.all():
-        #     # i_loss = torch.tensor(0.0, requires_grad=True).to(target_flow.device)
-        #     i_loss = i_loss
         if not mask.all():
             i_loss = i_loss[~mask]
         flow_loss += (i_weight * i_loss.mean())

@@ -11,7 +11,7 @@ from visualization.visualization import flow_to_color
 class LidarDataConverter:
     """
     To save point cloud sensor message from ROS Bag to npy files.
-    From LiDAR-bonnetal
+    inspired from LiDAR-bonnetal
     """
 
     def __init__(self, lidar_param, lidar_type, save_dir="data_dir", generate_gt=True):
@@ -40,7 +40,6 @@ class LidarDataConverter:
     def reset(self):
         """ Reset scan members. """
         self.points = np.zeros((0, 3), dtype=np.float32)  # [m, 3]: x, y, z
-        # self.intensity = np.zeros((0, 1), dtype=np.float32)  # [m ,1]: remission
 
         # projected range image - [H,W] range (-1 is no data)
         self.proj_range = np.full((self.proj_H, self.proj_W), -1, dtype=np.float32)
@@ -131,6 +130,7 @@ class LidarDataConverter:
 
 
 class Imu2World:
+    """Class to convert lidar from IMU frame to world frame via Interpolation"""
     def __init__(self, points, pose1, pose2, timestamp):
         self.points = points
         self.pose1 = pose1
@@ -213,6 +213,7 @@ def project_point_cloud(points, height=32, width=1024, fov_up=15, fov_down=-16):
 
 
 def convert_to_world_frame(points, timestamp_data, rotation, translation, lidar_type, current_pose, next_pose=None):
+    """function to convert scans from lidar frame to world frame"""
     world_points = None
     if lidar_type == "hilti":
         l_pcd = o3d.geometry.PointCloud()
@@ -248,6 +249,15 @@ def pcd_transformation(pcd, rotation, translation):
 
 
 def get_pixel_match(source, target, nearest_distance, height, width):
+    """
+    base function that generates optical flow and associated files
+    :param source: source point cloud
+    :param target: target point cloud
+    :param nearest_distance: nearest neighbour threshold between source and target points
+    :param height: height of the range image
+    :param width: width of the range image
+    :return: returns optical flow, its image version and report
+    """
     csv_dict = dict()
     source_frame = np.load(os.path.join(source, 'world_frame.npy'))
     target_frame = np.load(os.path.join(target, 'world_frame.npy'))
@@ -263,29 +273,10 @@ def get_pixel_match(source, target, nearest_distance, height, width):
 
     distances, corres = perform_kdtree(source_frame, target_frame, threshold=nearest_distance)
     csv_dict["correspondence"] = len(corres)
-
-    # count = np.bincount(corres)
-    #
-    # true_val = np.where(count == 1)[0]
-    # true_indices = [np.column_stack(np.where(corres == i)).ravel().tolist() for i in true_val]
-    # true_indices = np.array(true_indices)
-    # unique_mask = np.zeros_like(corres)
-    # unique_mask[true_indices] = 1
-    #
-    # non_unique = np.where(count > 1)[0]
-    # non_unique_pair = [[i, np.column_stack(np.where(corres == i)).ravel().tolist()] for i in non_unique]
-    # for i, val in enumerate(non_unique_pair):
-    #     min_distance_id = distances[val[1]].argmin()
-    #     unique_mask[val[1][min_distance_id]] = 1
-    #
-    # unique_mask = unique_mask.astype(bool)
-    #
     neighbour_mask = distances != np.inf
-
     mask = neighbour_mask  # * unique_mask
 
     csv_dict["neighbours"] = np.count_nonzero(neighbour_mask.astype(int))
-    # csv_dict["unique"] = np.count_nonzero(unique_mask.astype(int))
     csv_dict["valid (neighbor and unique)"] = np.count_nonzero(mask.astype(int))
 
     flow, flow_img = build_flow(source_x_y, target_x_y, corres, mask, height, width)
@@ -304,10 +295,6 @@ def get_pixel_match(source, target, nearest_distance, height, width):
 
 def map_points_xy(idx, valid_mask, no_of_points):
     source_x_y = np.full((no_of_points, 2), np.nan)
-    # valid_idx = np.argwhere(np.invert(valid_mask))
-    # valid_val = idx[valid_idx[:, 0], valid_idx[:, 1]]
-    # sort_id = np.argsort(valid_val)
-    # source_x_y[valid_val[sort_id]] = valid_idx[sort_id]
     valid_idx = np.where(idx != -1)
     valid_val = idx[valid_idx[0], valid_idx[1]]
     source_x_y[valid_val, 0] = valid_idx[0]
@@ -316,20 +303,13 @@ def map_points_xy(idx, valid_mask, no_of_points):
 
 
 def build_flow(source_idx, target_idx, indices, n_mask, height, width):
+    """function to build optical flow"""
     s_idx = source_idx[n_mask]
-    # s_flow = np.zeros((2, 32, 2000))
-    # s_flow[0, x, y] = x
-    # s_flow[1, x, y] = y
 
     t_idx = target_idx[indices[n_mask]]
 
     diff_x = t_idx[:, 0] - s_idx[:, 0]
     diff_y = t_idx[:, 1] - s_idx[:, 1]
-
-    # mask = (np.isnan(diff_x)) | (np.isnan(diff_y)) | np.invert(n_mask)
-    # s_idx = s_idx[np.invert(mask)].astype(int)
-    # diff_x = diff_x[np.invert(mask)].astype(int)
-    # diff_y = diff_y[np.invert(mask)].astype(int)
     mask = np.invert(np.isnan(diff_x)) & np.invert(np.isnan(diff_y))
     s_idx = s_idx[mask].astype(int)
     diff_x = diff_x[mask].astype(int)
@@ -348,6 +328,14 @@ def build_flow(source_idx, target_idx, indices, n_mask, height, width):
 
 
 def synth_flow(source, target, height, width):
+    """
+    function to generate synthetic optical flow
+    :param source: source point cloud id
+    :param target: target point cloud id
+    :param height: height of range image
+    :param width: width of range image
+    :return: synthetic optical flow
+    """
     csv_dict = dict()
     source_xyz = np.load(os.path.join(source, 'un_proj_xyz.npy'))
     target_xyz = np.load(os.path.join(target, 'un_proj_xyz.npy'))
@@ -368,8 +356,6 @@ def synth_flow(source, target, height, width):
     mask = np.ones_like(corres).astype(bool)
     csv_dict["valid (neighbor and unique)"] = np.count_nonzero(mask.astype(int))
 
-    # corres = corres[mask]
-
     flow, flow_img = build_flow(source_x_y, target_x_y, corres, mask, height, width)
 
     pixel_count = flow.shape[1] * flow.shape[2]
@@ -380,7 +366,5 @@ def synth_flow(source, target, height, width):
     csv_dict[f"non zero flow along x in percent"] = round(((np.count_nonzero(flow[0]) / pixel_count) * 100), 4)
     csv_dict[f"non zero flow along y (out of {pixel_count} pixels)"] = np.count_nonzero(flow[1])
     csv_dict[f"non zero flow y in percent"] = round(((np.count_nonzero(flow[1]) / pixel_count) * 100), 4)
-
-    # flow_img = flow_to_color(flow.transpose(1, 2, 0))
 
     return flow, flow_img, [csv_dict]
