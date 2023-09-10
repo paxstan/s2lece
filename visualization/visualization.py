@@ -1,10 +1,10 @@
-# Copyright 2019-present NAVER Corp.
-# CC BY-NC-SA 3.0
-# Available only for non-commercial use
-
-import pdb
+import logging
+import copy
 import numpy as np
-import matplotlib.pyplot as pl
+import matplotlib
+import matplotlib.pyplot as plt
+import open3d as o3d
+matplotlib.use('Agg')
 
 
 def make_colorwheel():
@@ -123,100 +123,231 @@ def flow_to_color(flow_uv, clip_flow=None, convert_to_bgr=False):
     u = flow_uv[:, :, 0]
     v = flow_uv[:, :, 1]
 
-    rad = np.sqrt(np.square(u) + np.square(v))
-    rad_max = np.max(rad)
+    # rad = np.sqrt(np.square(u) + np.square(v))
+    # rad_max = np.max(rad)
 
     epsilon = 1e-5
-    u = u / (rad_max + epsilon)
-    v = v / (rad_max + epsilon)
+    # u = u / (rad_max + epsilon)
+    # v = v / (rad_max + epsilon)
 
     return flow_compute_color(u, v, convert_to_bgr)
 
 
-def show_flow(img0, img1, flow, mask=None):
-    img0 = np.asarray(img0)
-    img1 = np.asarray(img1)
-    if mask is None: mask = 1
-    mask = np.asarray(mask)
-    if mask.ndim == 2: mask = mask[:, :, None]
-    assert flow.ndim == 3
-    assert flow.shape[:2] == img0.shape[:2] and flow.shape[2] == 2
+def compare_flow(target_flow, pred_flow, path, idx=1, loss=0):
+    """
+    function to visualize flow comparison
+    :param target_flow: ground truth optical flow
+    :param pred_flow: predicted optical flow
+    :param path: path to save
+    :param idx: id of the comparison
+    :param loss: loss between target and predicted
+    """
+    predicted_flow = np.floor(pred_flow[0, :, :, :].cpu().detach().numpy()).transpose(1, 2, 0)
+    target_flow = target_flow[0, :, :, :].cpu().detach().squeeze().numpy().transpose(1, 2, 0)
 
-    def noticks():
-        pl.xticks([])
-        pl.yticks([])
+    pred_flow_img = flow_to_color(predicted_flow)
+    true_flow_img = flow_to_color(target_flow)
 
-    fig = pl.figure("showing correspondences")
-    ax1 = pl.subplot(221)
-    ax1.numaxis = 0
-    pl.imshow(img0 * mask)
-    noticks()
-    ax2 = pl.subplot(222)
-    ax2.numaxis = 1
-    pl.imshow(img1)
-    noticks()
+    fig, axes = plt.subplots(2, 1, sharex=True, sharey=True)
+    axes[0].imshow(true_flow_img)
+    axes[0].set_title("original flow")
 
-    ax = pl.subplot(212)
-    ax.numaxis = 0
-    flow_img = flow_to_color(np.where(np.isnan(flow), 0, flow))
-    pl.imshow(flow_img * mask)
-    noticks()
+    axes[1].imshow(pred_flow_img)
+    axes[1].set_title("predicted flow")
 
-    pl.subplots_adjust(0.01, 0.01, 0.99, 0.99, wspace=0.02, hspace=0.02)
+    # plt.text(2.5, -5, f'loss: {loss}', ha='center')
+    plt.figtext(0.5, 0.05, f'loss: {loss}', ha='center')
 
-    def motion_notify_callback(event):
-        if event.inaxes is None:
-            return
-        x, y = event.xdata, event.ydata
-        # remove all lines
-        while ax1.lines:
-            ax1.lines[0].remove()
-        while ax2.lines:
-            ax2.lines[0].remove()
-        # ax1.lines = []
-        # ax2.lines = []
-        try:
-            x, y = int(x + 0.5), int(y + 0.5)
-            ax1.plot(x, y, '+', ms=10, mew=2, color='blue', scalex=False, scaley=False)
-            x, y = flow[y, x] + (x, y)
-            ax2.plot(x, y, '+', ms=10, mew=2, color='red', scalex=False, scaley=False)
-            # we redraw only the concerned axes
-            renderer = fig.canvas.get_renderer()
-            ax1.draw(renderer)
-            ax2.draw(renderer)
-            fig.canvas.blit(ax1.bbox)
-            fig.canvas.blit(ax2.bbox)
-        except IndexError:
-            return
+    plt.savefig(f"{path}/{idx}_pred_optical_flow.png", dpi=300)
 
-    cid_move = fig.canvas.mpl_connect('motion_notify_event', motion_notify_callback)
-    print("Move your mouse over the images to show matches (ctrl-C to quit)")
-    pl.show(block=True)
+    plt.close(fig)
+
+    np.save(f"{path}/{idx}_pred_optical_flow.npy", predicted_flow)
+    np.save(f"{path}/{idx}_target_optical_flow.npy", target_flow)
 
 
-def flow2rgb(flow_map, max_value):
-    flow_map_np = flow_map.detach().squeeze().numpy()
-    _, h, w = flow_map_np.shape
-    flow_map_np[:, (flow_map_np[0] == 0) & (flow_map_np[1] == 0)] = float('nan')
-    rgb_map = np.ones((3, h, w)).astype(np.float32)
-    if max_value is not None:
-        normalized_flow_map = flow_map_np / max_value
-    else:
-        normalized_flow_map = flow_map_np / (np.nanmax(np.abs(flow_map_np)))
-    rgb_map[0] += normalized_flow_map[0]
-    rgb_map[1] -= 0.5 * (normalized_flow_map[0] + normalized_flow_map[1])
-    rgb_map[2] += normalized_flow_map[1]
-    return rgb_map.clip(0, 1)
+def show_visual_progress(org_img, pred_img, path, title=None, loss=0):
+    """
+    function to visualize comparison between actual and predicted image from autoencoder
+    :param org_img: actual image
+    :param pred_img: predicted image
+    :param path: path to save the comparison
+    :param title: name of the comparison image file
+    :param loss: loss between actual and predicted image
+    """
+    try:
+        org_img = org_img.detach().cpu().numpy()[0, 0]
+        pred_img = pred_img.detach().cpu().numpy()[0, 0]
+
+        fig, axes = plt.subplots(2, 1, sharex=True, sharey=True)
+        axes[0].imshow(org_img)
+        axes[0].set_title("original image")
+        axes[1].imshow(pred_img)
+        axes[0].set_title("predicted image")
+
+        plt.figtext(0.5, 0.05, f'loss: {loss}', ha='center')
+
+        if title:
+            title = title.replace(" ", "_")
+            plt.savefig(f"{path}/{title}", dpi=300)
+        plt.close(fig)
+    except Exception as e:
+        logging.info(f"Issue in show  progress function : Exception: {e}")
 
 
-def display_flows(**kwargs):
-    # Create subplots
-    fig, axes = pl.subplots(len(kwargs), 1, sharex=True, sharey=True)
+def visualize_point_cloud(pred_flow, initial_flow, idx1, idx2, xyz1, xyz2, mask_valid, path, transform=False):
+    """
+    function to extract correspondence between source and target from optical flow
+    """
+    pred_flow = pred_flow.detach().squeeze().numpy()
+    initial_flow = initial_flow.detach().squeeze().numpy()
+    idx1 = idx1.detach().squeeze().numpy()
+    idx2 = idx2.detach().squeeze().numpy()
+    xyz1 = xyz1.detach().squeeze().numpy()
+    xyz2 = xyz2.detach().squeeze().numpy()
+    mask_valid = mask_valid.detach().squeeze().numpy()
 
-    for index, (key, value) in enumerate(kwargs.items()):
-        rgb_flow = flow2rgb(20 * value, max_value=None)
-        img = (rgb_flow * 255).astype(np.uint8).transpose(1, 2, 0)
-        axes[index].imshow(img, cmap='gray')
-        axes[index].set_title(key)
-    pl.tight_layout()
-    pl.show()
+    abs_flow = np.floor(initial_flow + pred_flow)
+    x_img = abs_flow[0].astype(int)
+    y_img = abs_flow[1].astype(int)
+
+    inv_x = np.where(x_img >= 64)
+    inv_y = np.where(y_img >= 2048)
+
+    x_img[inv_x] = inv_x[0]
+    y_img[inv_y] = inv_y[1]
+
+    x_img = x_img.reshape(-1)
+    y_img = y_img.reshape(-1)
+
+    corres_idx2 = (idx2[x_img.astype(int), y_img.astype(int)])
+    count = np.bincount(corres_idx2[corres_idx2 != -1])
+    non_unique_val = np.where(count > 1)[0]
+    non_unique_indices = np.array([])
+    for i in non_unique_val:
+        non_unique_id = np.where(corres_idx2 == i)[0]
+        non_unique_indices = np.concatenate((non_unique_indices, non_unique_id))
+    non_unique_indices = non_unique_indices.astype(int)
+    corres_idx2[non_unique_indices] = -1
+
+    corres_idx2 = corres_idx2.reshape(-1, 1)
+
+    corres_id = np.hstack((idx1.reshape(-1, 1), corres_idx2))
+    corres_id[np.invert(mask_valid.flatten()), :] = [-1, -1]
+
+    valid_index = np.where((corres_id[:, 0] != -1) & (corres_id[:, 1] != -1))[0]
+    valid_corres_id = corres_id[valid_index]
+
+    visualize_correspondence(xyz1, xyz2, valid_corres_id, transform, path)
+
+
+def visualize_correspondence(source_point, target_point, valid_corres_id, transform, path):
+    """function to visualize correspondence"""
+    # Create two point clouds
+    pcd1 = o3d.geometry.PointCloud()
+    pcd1.points = o3d.utility.Vector3dVector(source_point)  # Random point cloud 1
+    pcd2 = o3d.geometry.PointCloud()
+    pcd2.points = o3d.utility.Vector3dVector(target_point)  # Random point cloud 2
+
+    # Assign colors to each point cloud
+    color1 = [1.0, 0.0, 0.0]  # Red color for point cloud 1
+    color2 = [0.0, 1.0, 0.0]  # Green color for point cloud 2
+
+    pcd1.paint_uniform_color(color1)  # Assign color1 to all points in pcd1
+    pcd2.paint_uniform_color(color2)  # Assign color2 to all points in pcd2
+
+    if transform:
+        # Estimate transformation using correspondences
+        transformation = o3d.pipelines.registration.TransformationEstimationPointToPoint().compute_transformation(
+            pcd2, pcd1, o3d.utility.Vector2iVector(valid_corres_id[:, [1, 0]]))
+
+        print("Apply point-to-point ICP")
+        reg_p2l = o3d.pipelines.registration.registration_icp(
+            pcd2, pcd1, 0.001, transformation,
+            o3d.pipelines.registration.TransformationEstimationPointToPoint(),
+            o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=2000))
+        # print(reg_p2l)
+        # print("Transformation is:")
+        # print(reg_p2l.transformation)
+
+        # Apply transformation to align the second point cloud to the first
+        pcd2.transform(reg_p2l.transformation)
+
+    # Create visualization options
+    vis = o3d.visualization.Visualizer()
+    vis.create_window()
+
+    # Add the point clouds to the visualizer
+    vis.add_geometry(pcd1)
+    vis.add_geometry(pcd2)
+
+    # Create lines between corresponding points
+    lines = []
+    for i in range(valid_corres_id.shape[0] // 10):
+        line = o3d.geometry.LineSet()
+        line.points = o3d.utility.Vector3dVector(
+            [pcd1.points[valid_corres_id[i][0]], pcd2.points[valid_corres_id[i][1]]])
+        line.lines = o3d.utility.Vector2iVector([[0, 1]])
+        lines.append(line)
+
+        vis.add_geometry(line)
+
+    # Visualize the point clouds and lines
+    vis.run()
+
+    # Capture a screenshot of the visualizer window
+    vis.capture_screen_image(filename=f"{path}_vis.png")
+
+    vis.destroy_window()
+
+
+def visualize_different_viewpoints(point_cloud):
+    # Load your point cloud data
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(point_cloud)
+
+    # Number of viewpoints
+    num_viewpoints = 5
+
+    # Create a visualization window
+    vis = o3d.visualization.Visualizer()
+
+    for i in range(num_viewpoints):
+        # Generate random rotation angles around X, Y, and Z axes
+        rand_rot_x = np.random.uniform(0, 2 * np.pi)
+        rand_rot_y = np.random.uniform(0, 2 * np.pi)
+        rand_rot_z = np.random.uniform(0, 2 * np.pi)
+
+        # Generate random translation along X, Y, and Z axes
+        rand_trans_x = np.random.uniform(-1, 1)
+        rand_trans_y = np.random.uniform(-1, 1)
+        rand_trans_z = np.random.uniform(-1, 1)
+
+        rotation_matrix = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ])
+
+        # Create translation matrix
+        translation_matrix = np.array([
+            [1, 0, 0, rand_trans_x],
+            [0, 1, 0, 0],
+            [0, 0, 1, rand_trans_z],
+            [0, 0, 0, 1]
+        ])
+
+        # Combine rotation and translation to get the transformation matrix
+        transformation_matrix = translation_matrix @ rotation_matrix
+
+        # Deep copy the original point cloud before applying transformations
+        transformed_cloud = copy.deepcopy(pcd)
+
+        # Apply the transformation to the point cloud
+        transformed_cloud.transform(transformation_matrix)
+
+        o3d.io.write_point_cloud(f"../point_cloud_t_{i}.pcd", transformed_cloud)
+
+    # Close the visualization window
+    vis.destroy_window()

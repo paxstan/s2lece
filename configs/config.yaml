@@ -1,47 +1,222 @@
 #general
-train_fe: False
-fe_save_path: 'runs/fe_cnn_mode1_e5.pt'
-save_path: 'runs/model_test.pt'
+train_fe: True
 gpu:
-  - 0
+  - -1
+datasets:
+  - 'exp01'
+  - 'exp02'
+  - 'exp03'
+  - 'exp04'
+  - 'exp05'
+  - 'exp06'
+  - 'synth_data'
+  - 'synth_data2'
+  - 'kitti_03'
+  - 'kitti_04'
 
-#dataset
-#ros_bag_path: '../../data/hilti/rosbag/exp05_imu/exp05_construction_upper_level_2.bag'
-ros_bag_path: '../../data/hilti/rosbag/exp06_imu/exp06_construction_upper_level_3.bag'
-ground_truth_path : '../../data/hilti/rosbag/exp05_imu/exp_05_construction_upper_level_2_imu.txt'
-data_dir: 'dataset/data'
-# ae dataset
-# train_data_dir: 'dataset/data/ae_data'
-# test_data_dir: 'dataset/data/ae_val_data'
-# flow model dataset
-train_data_dir: 'dataset/data/data_exp_04'
-test_data_dir: 'dataset/data/data_exp_05'
-field_name: 'x, y, intensity'
-gen_gt: False
+#dataset creation
+dataset:
+  synth_kitti_03:
+    path: '../../data/kitti/03'
+    dataset_path: 'velodyne'
+    ros_bag: ''
+    ground_truth: '03_lidar_tum.txt'
+    data_dir: '../dataset/synth_kitti_03'
+    generate_ground_truth: True
+    mean: 12.12
+    std: 12.32
+  synth_kitti_04:
+    path: '../../data/kitti/04'
+    dataset_path: 'velodyne'
+    ros_bag: ''
+    ground_truth: '04_lidar_tum.txt'
+    data_dir: '../dataset/synth_kitti_04'
+    generate_ground_truth: True
+    mean: 12.12
+    std: 12.32
+  synth_np_kitti_03:
+    path: '../../data/kitti/03'
+    dataset_path: 'velodyne'
+    ros_bag: ''
+    ground_truth: '03_lidar_tum.txt'
+    data_dir: '../dataset/synth_np_kitti_03'
+    generate_ground_truth: False
+    mean: 12.12
+    std: 12.32
+  synth_np_kitti_04:
+    path: '../../data/kitti/04'
+    dataset_path: 'velodyne'
+    ros_bag: ''
+    ground_truth: '04_lidar_tum.txt'
+    data_dir: '../dataset/synth_np_kitti_04'
+    generate_ground_truth: False
+    mean: 12.12
+    std: 12.32
+  kitti_03:
+    path: '../../data/kitti/03'
+    dataset_path: 'velodyne'
+    ros_bag: ''
+    ground_truth: '03_lidar_tum.txt'
+    data_dir: '../dataset/kitti_03'
+    generate_ground_truth: True
+    mean: 12.12
+    std: 12.32
+  kitti_04:
+    path: '../../data/kitti/04'
+    dataset_path: 'velodyne'
+    ros_bag: ''
+    ground_truth: '04_lidar_tum.txt'
+    data_dir: '../dataset/kitti_04'
+    generate_ground_truth: True
+    mean: 12.12
+    std: 12.32
+  synth_data:
+    path: '../../data/hilti/rosbag/exp05_imu'
+    ros_bag: 'exp05_construction_upper_level_2.bag'
+    ground_truth: 'exp_05_construction_upper_level_2_imu.txt'
+    data_dir: '../dataset/synth_data_full'
+    generate_ground_truth: False
+  synth_data2:
+    path: '../../data/hilti/rosbag/exp05_imu'
+    ros_bag: 'exp05_construction_upper_level_2.bag'
+    ground_truth: 'exp_05_construction_upper_level_2_imu.txt'
+    data_dir: '../dataset/synth_data_full_new'
+    generate_ground_truth: True
+  exp05:
+    path: '../../data/hilti/rosbag/exp05_imu'
+    ros_bag: 'exp05_construction_upper_level_2.bag'
+    ground_truth : 'exp_05_construction_upper_level_2_imu.txt'
+    data_dir: '../dataset/exp05'
+    generate_ground_truth: False
+    mean: 5.2251
+    std: 9.6430
+  exp04:
+    path: '../../data/hilti/rosbag/exp04_imu'
+    ros_bag: 'exp04_construction_upper_level.bag'
+    ground_truth: 'exp_04_construction_upper_level_imu.txt'
+    data_dir: '../dataset/exp04'
+    generate_ground_truth: True
+  exp06:
+    path: '../../data/hilti/rosbag/exp06_imu'
+    ros_bag: 'exp06_construction_upper_level_3.bag'
+    ground_truth: 'exp_06_construction_upper_level_3_imu.txt'
+    data_dir: '../dataset/exp06'
+    generate_ground_truth: True
+  exp03:
+    path: '../../data/hilti/rosbag/exp03_stairs'
+    ros_bag: 'exp03_construction_stairs.bag'
+    ground_truth: ''
+    data_dir: '../dataset/exp03'
+    generate_ground_truth: False
+  exp02:
+    path: '../../data/hilti/rosbag/exp02_multilevel'
+    ros_bag: 'exp02_construction_multilevel.bag'
+    ground_truth: ''
+    data_dir: '../dataset/exp02'
+    generate_ground_truth: False
+  exp01:
+    path: '../../data/hilti/rosbag/exp01_construction_ground_level'
+    ros_bag: 'exp01_construction_ground_level.bag'
+    ground_truth: ''
+    data_dir: '../dataset/exp01'
+    generate_ground_truth: False
+
+correspondence:
+  nearest_neighbor: 1
+  pair_distance:
+    - 0.01
+    - 10
+
+# Auto encoder
+autoencoder:
+  save_path: 'fe_ae_full.pt'
+  pretrained_path: '../runs/run_2023-08-22T18-31-27-576457/fe_ae_full.pt'
+  learning_rate: 0.0001
+  weight_decay: 0.00005
+  momentum: 0.9
+  epoch: 25
+  wd_lambda: 0.001
+  wup_epochs: 1
+  lr_decay: 0.995        # learning rate decay per epoch after initial cycle (from min lr)
+  epsilon: 0.001
+  ckpt_interval: 10
+  early_stopping: 10
+  batch_size: 4
+  enable_wandb: True
+  params:
+    in_channel: 1
+    dropout: 0.01
+    bn_d: 0.01
+    type: 'fe'
+
+# flow model
+s2lece:
+  save_path: 'slece_model.pt'
+  ae_path: '../runs/run_2023-08-24T09-43-18-611951/fe_ae_full.pt'
+  pretrained_path: '../runs/1_run_final_report_kitti/slece_model.pt'
+  field_name: 'x, y, z, intensity'
+  learning_rate: 0.00085
+  weight_decay: 0.00005
+  wd_lambda: 0.01
+  mixed_precision: True
+  clip: 1.0
+  epoch: 100
+  wup_epochs: 1
+  batch_size: 4
+  ckpt_interval: 4
+  early_stopping: 10
+  enable_wandb: True
+  epsilon: 1e-8
+  iters: 5
+  params:
+    embedded_dim: 16
+    dropout: 0.01
 
 #lidarparameter
 lidar_param:
-  height: 32 # from hilti 2022 benchmark paper
-  width: 1024 # from hilti 2022 benchmark paper
-  h_res: 0.18  # horizontal resolution (10Hz setting) - width
-  v_res: 1  # vertical res - height
-  v_fov: # Field of view (-ve, +ve) along vertical axis - height
-    down: -16
-    up: 15
+  hilti:
+    height: 32 # from hilti 2022 benchmark paper
+    width: 2000
+    h_res: 0.18  # horizontal resolution (10Hz setting) - width
+    v_res: 1  # vertical res - height
+    v_fov: # Field of view (-ve, +ve) along vertical axis - height
+      down: -16
+      up: 15
+    lidar_to_imu:
+      translation:
+        - -0.001
+        - -0.00855
+        - 0.055
+      rotation:
+        - 0.7071068
+        - -0.7071068
+        - 0
+        - 0
+  kitti:
+    height: 64
+    width: 2048
+    v_fov: # Field of view (-ve, +ve) along vertical axis - height
+      down: -24.9
+      up: 2
+    lidar_to_imu:
+      translation:
+        - 0
+        - 0
+        - 0
+      rotation:
+        - 0
+        - 0
+        - 0
+        - 0
 
 #imu_data
-lidar_to_imu:
-  translation :
-    - -0.001
-    - -0.00855
-    - 0.055
-  rotation :
-    - 0.7071068
-    - -0.7071068
-    - 0
-    - 0
-
-#hyperparameter
-learning_rate: 1e-4
-weight_decay: 5e-4
-epoch: 5
+#lidar_to_imu:
+#  translation :
+#    - -0.001
+#    - -0.00855
+#    - 0.055
+#  rotation :
+#    - 0.7071068
+#    - -0.7071068
+#    - 0
+#    - 0
